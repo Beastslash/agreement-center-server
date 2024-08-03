@@ -1,4 +1,7 @@
 {
   "main": "index.js",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2"
+  }
 }

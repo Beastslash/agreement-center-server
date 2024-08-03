@@ -1,4 +1,4 @@
-export async function request(requestOptions) {
+export default async function(requestOptions, body) {
 
   return await new Promise((resolve, reject) => {
 
@@ -15,6 +15,12 @@ export async function request(requestOptions) {
     });
 
     request.on("error", (err) => reject(err));
+
+    if (body) {
+
+      request.write(body);
+
+    }
 
     request.end();
 
