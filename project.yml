@@ -1,0 +1,58 @@
+parameters: {}
+environment: {}
+packages:
+  - name: authentication
+    shared: false
+    environment: {}
+    parameters: {}
+    annotations: {}
+    functions:
+      - name: getUserAccessToken
+        binary: false
+        main: ""
+        runtime: nodejs:18
+        web: false
+        webSecure: false
+        parameters: {}
+        environment: {
+          CLIENT_ID: "${CLIENT_ID}",
+          CLIENT_SECRET: "${CLIENT_SECRET}"
+        }
+        annotations: {}
+        limits: {
+          memory: 128
+        }
+  - name: agreements
+    shared: false
+    environment: {}
+    parameters: {}
+    annotations: {}
+    functions:
+      - name: getAgreement
+        binary: false
+        main: ""
+        runtime: nodejs:18
+        web: false
+        webSecure: false
+        parameters: {}
+        environment: {
+          REPOSITORY: "${REPOSITORY}",
+          PRIVATE_KEY: "${PRIVATE_KEY}",
+          CLIENT_ID: "${CLIENT_ID}"
+        }
+        annotations: {}
+        limits: {
+          memory: 128
+        }
+      - name: updateAgreementInputValues
+        binary: false
+        main: ""
+        runtime: nodejs:18
+        web: false
+        webSecure: false
+        parameters: {}
+        environment: {}
+        annotations: {}
+        limits: {
+          memory: 128
+        }
