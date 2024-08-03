@@ -20,9 +20,16 @@ export default async function(event) {
       port: 443
     });
 
+    return userResponse.id;
+
   } catch (err) {
 
-
+    throw {
+      statusCode: 500,
+      body: {
+        message: "Internal server error."
+      }
+    }
 
   }
 

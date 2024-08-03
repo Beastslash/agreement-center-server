@@ -1,14 +1,20 @@
-export async function verifyAgreementPath(event) {
+export default async function(userID, githubAppToken, githubRepositoryPath, agreementPath) {
 
-  const githubUserAccessToken = event.http.headers["github-user-access-token"];
-  if (!githubUserAccessToken) {
+  const headers = {Authorization: `Bearer ${githubAppToken}`};
+  const agreementIDResponse = await request({
+    host: "api.github.com",
+    path: `/repos/${githubRepositoryPath}/contents/index/${userID}.json`,
+    headers
+  });
+  const agreementIDs = JSON.parse(agreementIDResponse.content);
+  if (!agreementIDs.includes(agreementPath)) {
 
-    return {
-      statusCode: 401,
+    throw {
+      statusCode: 404,
       body: {
-        message: "github-user-access-token header required."
+        message: "Agreement doesn't exist or this user doesn't have access to it."
       }
-    };
+    }
 
   }
 

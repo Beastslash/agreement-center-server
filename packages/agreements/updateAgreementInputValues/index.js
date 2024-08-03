@@ -1,35 +1,15 @@
-import getGitHubUserID from "../../../modules/getGitHubUserID";
 import { request } from "../../../modules/request";
-import jwt from "jsonwebtoken";
+import verifyAgreementPath from "../../../modules/verifyAgreementPath";
+import getAuthenticationDetails from "../../../modules/getAuthenticationDetails";
 
 export async function main(event) {
 
   try {
 
     // Verify that the agreement is in the user's index list.
-    const userID = getGitHubUserID(event)
-    const githubPrivateKey = process.env.PRIVATE_KEY;
-    const githubClientID = process.env.CLIENT_ID;
-    const githubAppToken = jwt.sign({iss: githubClientID}, githubPrivateKey, {algorithm: "RS256", expiresIn: "5s"});
-    const githubRepositoryPath = process.env.REPOSITORY;
-    const headers = {Authorization: `Bearer ${githubAppToken}`};
-    const agreementIDResponse = await request({
-      host: "api.github.com",
-      path: `/repos/${githubRepositoryPath}/contents/index/${userID}.json`,
-      headers
-    });
-    const agreementIDs = JSON.parse(agreementIDResponse.content);
+    const {userID, githubAppToken} = await getAuthenticationDetails(event);
     const agreementPath = event.agreement_path;
-    if (!agreementIDs.includes(agreementPath)) {
-
-      return {
-        statusCode: 404,
-        body: {
-          message: "Agreement doesn't exist or this user doesn't have access to it."
-        }
-      }
-
-    }
+    await verifyAgreementPath(userID, githubAppToken, githubRepositoryPath, agreementPath);
 
     // Update the input values
     const agreementInputsResponse = await request({
