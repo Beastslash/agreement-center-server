@@ -1,5 +1,7 @@
 parameters: {}
-environment: {}
+environment: {
+  CLIENT_ID: "${CLIENT_ID}"
+}
 packages:
   - name: authentication
     shared: false
@@ -15,7 +17,6 @@ packages:
         webSecure: false
         parameters: {}
         environment: {
-          CLIENT_ID: "${CLIENT_ID}",
           CLIENT_SECRET: "${CLIENT_SECRET}"
         }
         annotations: {}
@@ -24,7 +25,10 @@ packages:
         }
   - name: agreements
     shared: false
-    environment: {}
+    environment: {
+      REPOSITORY: "${REPOSITORY}",
+      PRIVATE_KEY: "${PRIVATE_KEY}"
+    }
     parameters: {}
     annotations: {}
     functions:
@@ -35,11 +39,7 @@ packages:
         web: false
         webSecure: false
         parameters: {}
-        environment: {
-          REPOSITORY: "${REPOSITORY}",
-          PRIVATE_KEY: "${PRIVATE_KEY}",
-          CLIENT_ID: "${CLIENT_ID}"
-        }
+        environment: {}
         annotations: {}
         limits: {
           memory: 128
