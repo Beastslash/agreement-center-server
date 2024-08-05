@@ -1,4 +1,6 @@
-export default async function(requestOptions, body) {
+import https, { RequestOptions } from "https";
+
+export default async function(requestOptions: RequestOptions, body?: string) {
 
   return await new Promise((resolve, reject) => {
 

@@ -2,9 +2,10 @@
 // The UAT can be used for the server to authenticate the user when they view and update agreements.
 // This UAT can be safely stored on the client, as there are no permissions.
 
-import { request } from "../../../modules/request";
+import request from "../../../../lib/request.js";
+import ParsedWebEvent from "../../../../lib/ParsedWebEvent.js"
 
-export async function main(event) {
+export async function main(event: ParsedWebEvent) {
 
   try {
 
@@ -27,11 +28,25 @@ export async function main(event) {
       host: "github.com",
       path: `/login/oauth/access_token?client_id=${process.env.CLIENT_ID}&client_secret=${process.env.CLIENT_SECRET}&${githubRefreshToken ? `refresh_token=${githubRefreshToken}` : `code=${githubAuthenticationCode}`}`,
       port: 443,
+      headers: {Accept: "application/json"},
       method: "POST"
     });
 
-    // Return the user access token.
-    return {body: userAccessTokenResponse}
+    if (!(userAccessTokenResponse instanceof Object)) {
+
+      throw {
+        statusCode: 500,
+        body: {
+          message: "Internal server error"
+        }
+      }
+
+    }
+
+    return {
+      statusCode: userAccessTokenResponse.hasOwnProperty("access_token") ? 200 : 400,
+      body: userAccessTokenResponse
+    }
 
   } catch (err) {
 

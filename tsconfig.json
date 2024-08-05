@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "esModuleInterop": true,
+    "importHelpers": true,
+    "module": "NodeNext",
+    "outDir": "lib",
+    "rootDirs": ["src"],
+    "target": "ESNext",
+    "strict": true,
+    "declaration": true,
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src/**/*",
+    "./package.json",
+  ]
+}

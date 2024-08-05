@@ -11,9 +11,9 @@ packages:
     functions:
       - name: getUserAccessToken
         binary: false
-        main: ""
+        main: "lib/index.js"
         runtime: nodejs:18
-        web: false
+        web: true
         webSecure: false
         parameters: {}
         environment: {
@@ -36,7 +36,7 @@ packages:
         binary: false
         main: ""
         runtime: nodejs:18
-        web: false
+        web: true
         webSecure: false
         parameters: {}
         environment: {}
@@ -48,7 +48,7 @@ packages:
         binary: false
         main: ""
         runtime: nodejs:18
-        web: false
+        web: true
         webSecure: false
         parameters: {}
         environment: {}

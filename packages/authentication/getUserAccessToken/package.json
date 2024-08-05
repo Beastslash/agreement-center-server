@@ -1,4 +1,10 @@
 {
-  "main": "index.js",
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.1.0",
+    "typescript": "^4"
+  },
+  "scripts": {
+    "build": "tsc -b"
+  }
 }
