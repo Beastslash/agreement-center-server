@@ -4,7 +4,7 @@
     "esModuleInterop": true,
     "importHelpers": true,
     "module": "NodeNext",
-    "outDir": "lib",
+    "outDir": "dist",
     "rootDir": "src",
     "target": "ESNext",
     "strict": true,

@@ -1,6 +1,6 @@
 {
   "type": "module",
-  "main": "lib/index.js",
+  "main": "dist/index.js",
   "devDependencies": {
     "@types/node": "^22.1.0",
     "typescript": "^4"
