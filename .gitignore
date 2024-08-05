@@ -7,4 +7,3 @@ package-lock.json
 .DS_Store
 .env
 dist
-lib
