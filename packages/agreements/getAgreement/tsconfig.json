@@ -4,18 +4,12 @@
     "esModuleInterop": true,
     "importHelpers": true,
     "module": "NodeNext",
-    "outDir": "lib",
-    "rootDirs": ["src", "../../../../lib"],
+    "outDir": "dist",
+    "rootDir": "src",
     "target": "ES2022",
     "strict": true,
-    "resolveJsonModule": true
   },
   "include": [
-    "src/**/*",
-    "./package.json",
-    "../../../../lib/request.ts",
-    "../../../../lib/verifyAgreementPath.ts",
-    "../../../../lib/ParsedWebEvent.ts",
-    "../../../../lib/getAuthenticationDetails.ts"
+    "src/**/*"
   ]
 }

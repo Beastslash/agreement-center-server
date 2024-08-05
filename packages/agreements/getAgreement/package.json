@@ -9,6 +9,6 @@
     "jsonwebtoken": "^9.0.2"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b --clean && tsc -b"
   }
 }

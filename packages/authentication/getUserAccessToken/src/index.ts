@@ -2,8 +2,8 @@
 // The UAT can be used for the server to authenticate the user when they view and update agreements.
 // This UAT can be safely stored on the client, as there are no permissions.
 
-import request from "../../../../lib/request.js";
-import ParsedWebEvent from "../../../../lib/ParsedWebEvent.js"
+import request from "#lib/request.js";
+import ParsedWebEvent from "#lib/ParsedWebEvent.js"
 
 export async function main(event: ParsedWebEvent) {
 

@@ -4,8 +4,8 @@
     "esModuleInterop": true,
     "importHelpers": true,
     "module": "NodeNext",
-    "outDir": "lib",
-    "rootDirs": ["src"],
+    "outDir": "lib/lib",
+    "rootDir": "src",
     "target": "ESNext",
     "strict": true,
     "declaration": true,
@@ -13,6 +13,5 @@
   },
   "include": [
     "src/**/*",
-    "./package.json",
   ]
 }

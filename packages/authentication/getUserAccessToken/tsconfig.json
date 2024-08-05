@@ -5,15 +5,15 @@
     "importHelpers": true,
     "module": "NodeNext",
     "outDir": "lib",
-    "rootDirs": ["src"],
+    "rootDir": "src",
     "target": "ESNext",
     "strict": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "#lib/*": ["../../../lib/*"]
+    }
   },
   "include": [
     "src/**/*",
-    "./package.json",
-    "../../../lib/request.ts",
-    "../../../lib/ParsedWebEvent.ts"
   ]
 }
