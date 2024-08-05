@@ -1,14 +1,29 @@
-import { request } from "../../../modules/request";
-import verifyAgreementPath from "../../../modules/verifyAgreementPath";
-import getAuthenticationDetails from "../../../modules/getAuthenticationDetails";
+import request from "#lib/request.js";
+import verifyAgreementPath from "#lib/verifyAgreementPath.js";
+import getAuthenticationDetails from "#lib/getAuthenticationDetails.js";
+import ParsedWebEvent from "#lib/ParsedWebEvent.js";
 
-export async function main(event) {
+export async function main(event: ParsedWebEvent) {
 
   try {
 
     // Verify that the agreement is in the user's index list.
-    const {userID, githubAppToken} = await getAuthenticationDetails(event);
+    const {userID, githubAppToken, headers} = await getAuthenticationDetails(event);
     const agreementPath = event.agreement_path;
+    const githubRepositoryPath = process.env.REPOSITORY;
+
+    if (typeof(agreementPath) !== "string") {
+
+      throw new Error("Agreement path required.");
+
+    }
+
+    if (!githubRepositoryPath) {
+
+      throw new Error("REPOSITORY environment variable is required.");
+
+    }
+
     await verifyAgreementPath(userID, githubAppToken, githubRepositoryPath, agreementPath);
 
     // Update the input values
@@ -18,8 +33,14 @@ export async function main(event) {
       path: `/repos/${githubRepositoryPath}/contents/${agreementPath}/inputs.json`
     });
 
+    if (!(agreementInputsResponse instanceof Object) || !("content" in agreementInputsResponse) || typeof(agreementInputsResponse.content) !== "string") {
+
+      throw new Error("Content received from GitHub wasn't a string.");
+  
+    }
+
     const agreementInputs = JSON.parse(agreementInputsResponse.content);
-    const newInputPairs = event.body.inputs;
+    const newInputPairs = event.inputs;
     if (!(newInputPairs instanceof Array)) {
 
       return {
@@ -33,32 +54,31 @@ export async function main(event) {
 
     for (let i = 0; newInputPairs.length > i; i++) {
 
-      const inputIndex = newInputPairs[i].index;
-      if (!agreementInputs.hasOwnProperty(inputIndex)) {
+      const { index, value } = newInputPairs[i];
+      if (!agreementInputs.hasOwnProperty(index)) {
 
         return {
           statusCode: 400,
           body: {
-            message: `Input index ${inputIndex} doesn't exist.`
+            message: `Input index ${index} doesn't exist.`
           }
         }
     
       }
 
-      const doesUserHavePermissionToChangeInput = agreementInputs[inputIndex].ownerID === userID;
+      const doesUserHavePermissionToChangeInput = agreementInputs[index].ownerID === userID;
       if (!doesUserHavePermissionToChangeInput) {
     
         return {
           statusCode: 403,
           body: {
-            message: `User doesn't have permission to change input ${inputIndex}.`
+            message: `User doesn't have permission to change input ${index}.`
           }
         }
     
       }
 
-      const inputValue = event.body.input_value;
-      agreementInputs[inputIndex].value = inputValue;
+      agreementInputs[index].value = value;
 
     }
 

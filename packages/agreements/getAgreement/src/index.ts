@@ -1,16 +1,16 @@
 // This function returns a specific agreement from the repository.
 
-import request from "../../../../lib/request.js";
-import verifyAgreementPath from "../../../../lib/verifyAgreementPath.js";
-import getAuthenticationDetails from "../../../../lib/getAuthenticationDetails.js";
-import ParsedWebEvent from "../../../../lib/ParsedWebEvent.js";
+import request from "#lib/request.js";
+import verifyAgreementPath from "#lib/verifyAgreementPath.js";
+import getAuthenticationDetails from "#lib/getAuthenticationDetails.js";
+import ParsedWebEvent from "#lib/ParsedWebEvent.js";
 
 export async function main(event: ParsedWebEvent) {
 
   try {
 
     // Verify that the agreement is in the user's index list.
-    const {userID, githubAppToken} = await getAuthenticationDetails(event);
+    const {userID, githubAppToken, headers} = await getAuthenticationDetails(event);
     const agreementPath = event.agreement_path;
     const githubRepositoryPath = process.env.REPOSITORY;
 
@@ -29,7 +29,6 @@ export async function main(event: ParsedWebEvent) {
     await verifyAgreementPath(userID, githubAppToken, githubRepositoryPath, agreementPath);
   
     // Return the agreement, its inputs, and its permisssions.
-    const headers = {Authorization: `Bearer ${githubAppToken}`};
     const agreementTextResponse = await request({
       host: "api.github.com",
       headers,
