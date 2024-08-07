@@ -4,6 +4,7 @@ import request from "#lib/request.js";
 import verifyAgreementPath from "#lib/verifyAgreementPath.js";
 import getAuthenticationDetails from "#lib/getAuthenticationDetails.js";
 import ParsedWebEvent from "#lib/ParsedWebEvent.js";
+import ServerError from "#lib/ServerError.js"
 
 export async function main(event: ParsedWebEvent) {
 
@@ -16,13 +17,13 @@ export async function main(event: ParsedWebEvent) {
 
     if (typeof(agreementPath) !== "string") {
 
-      throw new Error("Agreement path required.");
+      throw new ServerError(400, "Agreement path required.");
 
     }
 
     if (!githubRepositoryPath) {
 
-      throw new Error("REPOSITORY environment variable is required.");
+      throw new ServerError(400, "REPOSITORY environment variable is required.");
 
     }
 
@@ -32,17 +33,17 @@ export async function main(event: ParsedWebEvent) {
     const agreementTextResponse = await request({
       host: "api.github.com",
       headers,
-      path: `/repos/${process.env.REPOSITORY}/contents/${agreementPath}/README.md`
+      path: `/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/README.md`
     });
     const agreementInputsResponse = await request({
       host: "api.github.com",
       headers,
-      path: `/repos/${process.env.REPOSITORY}/contents/${agreementPath}/inputs.json`
+      path: `/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/inputs.json`
     });
     const agreementPermissionsResponse = await request({
       host: "api.github.com",
       headers,
-      path: `/repos/${process.env.REPOSITORY}/contents/${agreementPath}/permissions.json`
+      path: `/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/permissions.json`
     });
 
     const isAgreementTextResponseContentString = agreementTextResponse instanceof Object && "content" in agreementTextResponse && typeof(agreementTextResponse.content) === "string";
@@ -50,10 +51,10 @@ export async function main(event: ParsedWebEvent) {
     const isAgreementPermissionsResponseContentString = agreementPermissionsResponse instanceof Object && "content" in agreementPermissionsResponse && typeof(agreementPermissionsResponse.content) === "string";
     if (!isAgreementTextResponseContentString || !isAgreementInputsResponseContentString || !isAgreementPermissionsResponseContentString) {
 
-      throw new Error("Agreement text content is not a string.");
+      throw new ServerError(500, "Agreement text content is not a string.");
 
     } 
-
+    
     return {
       body: {
         text: agreementTextResponse.content,
@@ -62,14 +63,22 @@ export async function main(event: ParsedWebEvent) {
       }
     }
 
-  } catch (err) {
+  } catch (err: unknown) {
 
     console.error(err);
 
+    let serverError: ServerError;
+    if (!(err instanceof ServerError) || err.statusCode === 500) {
+
+      err = new ServerError(500, "Internal server error.");
+
+    }
+    serverError = err as ServerError;
+
     return {
-      statusCode: 500,
+      statusCode: serverError.statusCode,
       body: {
-        message: "Internal server error."
+        message: serverError.message
       }
     }
 

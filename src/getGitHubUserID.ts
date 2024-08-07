@@ -1,49 +1,33 @@
 import ParsedWebEvent from "./ParsedWebEvent.js";
 import request from "./request.js";
+import ServerError from "./ServerError.js";
 
 export default async function(event: ParsedWebEvent): Promise<number> {
 
   const {http: {headers}} = event;
-  const doesGitHubUserAccessTokenHeaderExist = "github-user-access-token" in headers;
+  const doesGitHubUserAccessTokenHeaderExist = headers.hasOwnProperty("github-user-access-token");
   const githubUserAccessToken = doesGitHubUserAccessTokenHeaderExist ? headers["github-user-access-token"] : undefined;
-  if (!githubUserAccessToken) {
+  if (typeof(githubUserAccessToken) !== "string") {
 
-    throw {
-      statusCode: 401,
-      body: {
-        message: "github-user-access-token header required."
-      }
-    };
+    throw new ServerError(400, "github-user-access-token header required.");
 
   }
 
-  try {
+  const userResponse = await request({
+    host: "api.github.com",
+    path: `/user`,
+    headers: {
+      Authorization: `Bearer ${githubUserAccessToken}`
+    },
+    port: 443
+  });
 
-    const userResponse = await request({
-      host: "api.github.com",
-      path: `/user?access_token?${githubUserAccessToken}`,
-      port: 443
-    });
+  if (!(userResponse instanceof Object) || !("id" in userResponse) || typeof(userResponse.id) !== "number") {
 
-    // @ts-expect-error
-    if (!(userResponse instanceof Object) || !userResponse.hasOwn("id")) {
-
-      throw new Error("Response wasn't an object.");
-
-    }
-
-    // @ts-expect-error
-    return userResponse.id;
-
-  } catch (err) {
-
-    throw {
-      statusCode: 500,
-      body: {
-        message: "Internal server error."
-      }
-    }
+    throw new ServerError(500, "Response wasn't an object.");
 
   }
+
+  return userResponse.id;
 
 }

@@ -20,4 +20,4 @@ export default async function(event: ParsedWebEvent) {
     headers: {Authorization: `Bearer ${githubAppToken}`}
   }
 
-}
+}0
