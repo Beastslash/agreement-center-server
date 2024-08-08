@@ -2,6 +2,8 @@
 // Routes should be in the routes folder, not this file.
 
 import express from "express";
+import {createServer} from "https";
+import {readFileSync} from "fs";
 import agreementsRouter from "./routes/agreements.js";
 import authenticationRouter from "./routes/authentication.js";
 
@@ -11,4 +13,8 @@ app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);
 
 const port = process.env.PORT;
-app.listen(port, () => console.log(`Application Center is now listening on port ${port}.`));
+const server = createServer({
+  key: readFileSync("../security/cert.key"),
+  cert: readFileSync("../security/cert.pem")
+}, app);
+server.listen(port, () => console.log(`Application Center is now listening on port ${port}.`));
