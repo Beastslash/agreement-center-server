@@ -200,7 +200,8 @@ router.get("/", async (request, response) => {
     return response.json({
       text: agreementTextResponse,
       inputs: agreementInputsResponse,
-      permissions: agreementPermissionsResponse
+      permissions: agreementPermissionsResponse,
+      githubUserID: githubUserID
     });
 
   } catch (error: unknown) {
