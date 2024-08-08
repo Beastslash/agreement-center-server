@@ -5,8 +5,9 @@ prompt = no
 [req_distinguished_name]
 C = US
 ST = MI
-L = 
+L = Location
 O = Beastslash LLC
+OU = Corporate Governance
 CN = www.localhost.com
 [v3_req]
 keyUsage = critical, digitalSignature, keyAgreement

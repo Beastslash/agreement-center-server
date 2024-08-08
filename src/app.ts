@@ -6,15 +6,18 @@ import {createServer} from "https";
 import {readFileSync} from "fs";
 import agreementsRouter from "./routes/agreements.js";
 import authenticationRouter from "./routes/authentication.js";
+import cors from "cors";
 
 const app = express();
 app.use(express.json());
+app.use(cors());
+app.disable("x-powered-by");
 app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);
 
 const port = process.env.PORT;
 const server = createServer({
-  key: readFileSync("../security/cert.key"),
-  cert: readFileSync("../security/cert.pem")
+  key: readFileSync("./security/localhost.key"),
+  cert: readFileSync("./security/localhost.pem")
 }, app);
 server.listen(port, () => console.log(`Application Center is now listening on port ${port}.`));

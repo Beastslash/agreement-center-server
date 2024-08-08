@@ -9,6 +9,7 @@ import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import ForbiddenError from "#utils/errors/ForbiddenError.js";
 import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
+import {readFileSync} from "fs";
 
 const router = Router();
 
@@ -16,13 +17,6 @@ const router = Router();
 router.use(async (request, response, next) => {
 
   try {
-
-    const githubPrivateKey = process.env.PRIVATE_KEY;
-    if (!githubPrivateKey) {
-
-      throw new Error("GitHub App private key required.");
-
-    }
 
     async function getGitHubUserID() {
 
@@ -37,7 +31,8 @@ router.use(async (request, response, next) => {
         host: "api.github.com",
         path: `/user`,
         headers: {
-          Authorization: `Bearer ${githubUserAccessToken}`
+          Authorization: `Bearer ${githubUserAccessToken}`,
+          "user-agent": "Agreement-Center"
         },
         port: 443
       });
@@ -48,10 +43,62 @@ router.use(async (request, response, next) => {
     
       }
 
+      return userResponse.id;
+
+    }
+
+    async function getInstallationAccessToken(): Promise<string> {
+
+      const jsonWebToken = jwt.sign({iss: process.env.CLIENT_ID}, readFileSync("./security/github.pem"), {algorithm: "RS256", expiresIn: "5s"});
+  
+      const installations = await fetch({
+        host: "api.github.com",
+        path: `/app/installations`,
+        headers: {
+          Authorization: `Bearer ${jsonWebToken}`,
+          "user-agent": "Agreement-Center",
+          "accept": "application/json"
+        },
+        port: 443
+      });
+
+      if (!(installations instanceof Array)) {
+    
+        throw new Error("Malformed response received from GitHub.");
+    
+      }
+
+      const githubAccountID = process.env.GITHUB_ACCOUNT_ID;
+      if (!githubAccountID) throw new Error("GITHUB_ACCOUNT_ID needs to be defined in environment variables.");
+
+      const installationID = installations.find((installation) => installation.account.id === parseInt(githubAccountID, 10))?.id;
+
+      if (!installationID) throw new Error();
+
+      const installationAccessToken = await fetch({
+        host: "api.github.com",
+        path: `/app/installations/${installationID}/access_tokens`,
+        headers: {
+          Authorization: `Bearer ${jsonWebToken}`,
+          "user-agent": "Agreement-Center",
+          "accept": "application/json"
+        },
+        method: "POST",
+        port: 443
+      });
+
+      if (!(installationAccessToken instanceof Object) || !("token" in installationAccessToken) || typeof(installationAccessToken.token) !== "string") {
+    
+        throw new Error("Malformed response received from GitHub.");
+    
+      }
+
+      return installationAccessToken.token;
+
     }
     
     response.locals.githubUserID = await getGitHubUserID();
-    response.locals.githubAppAccessToken = jwt.sign({iss: process.env.CLIENT_ID}, githubPrivateKey, {algorithm: "RS256", expiresIn: "5s"});
+    response.locals.githubInstallationAccessToken = await getInstallationAccessToken();
 
     next();
 
@@ -112,9 +159,9 @@ router.get("/", async (request, response) => {
 
   try {
 
-    const { githubAppAccessToken, githubUserID, agreementPath } = response.locals;
+    const { githubInstallationAccessToken, githubUserID, agreementPath } = response.locals;
     const githubRepositoryPath = process.env.REPOSITORY;
-    const headers = {Authorization: `Bearer ${githubAppAccessToken}`};
+    const headers = {Authorization: `Bearer ${githubInstallationAccessToken}`, "user-agent": "Agreement-Center", accept: "application/vnd.github.v3.raw"};
     async function getUserAgreementIDs(): Promise<string[]> {
 
       const agreementIDResponse = await fetch({
@@ -123,13 +170,7 @@ router.get("/", async (request, response) => {
         headers
       });
 
-      if (!(agreementIDResponse instanceof Object) || !("content" in agreementIDResponse) || typeof(agreementIDResponse.content) !== "string") {
-
-        throw new Error("Malformed response received from GitHub.");
-
-      }
-
-      return JSON.parse(agreementIDResponse.content);
+      return JSON.parse(agreementIDResponse as string);
 
     }
 
@@ -156,19 +197,10 @@ router.get("/", async (request, response) => {
       path: `/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/permissions.json`
     });
 
-    const isAgreementTextResponseContentString = agreementTextResponse instanceof Object && "content" in agreementTextResponse && typeof(agreementTextResponse.content) === "string";
-    const isAgreementInputsResponseContentString = agreementInputsResponse instanceof Object && "content" in agreementInputsResponse && typeof(agreementInputsResponse.content) === "string";
-    const isAgreementPermissionsResponseContentString = agreementPermissionsResponse instanceof Object && "content" in agreementPermissionsResponse && typeof(agreementPermissionsResponse.content) === "string";
-    if (!isAgreementTextResponseContentString || !isAgreementInputsResponseContentString || !isAgreementPermissionsResponseContentString) {
-
-      throw new Error("Malformed response received from GitHub.");
-
-    }
-    
     return response.json({
-      text: agreementTextResponse.content,
-      inputs: agreementInputsResponse.content,
-      permissions: agreementPermissionsResponse.content
+      text: agreementTextResponse,
+      inputs: agreementInputsResponse,
+      permissions: agreementPermissionsResponse
     });
 
   } catch (error: unknown) {

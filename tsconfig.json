@@ -12,7 +12,8 @@
     "resolveJsonModule": true,
     "paths": {
       "#utils/*": ["src/utils/*"]
-    }
+    },
+    "sourceMap": true
   },
   "include": [
     "src/**/*",

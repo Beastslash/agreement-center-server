@@ -8,10 +8,8 @@ export default async function(requestOptions: RequestOptions, extraOptions?: {bo
 
       let responseBody = "";
 
-      console.log(response);
       response.on("timeout", () => {
         
-        console.log(response)
         request.destroy();
         if (extraOptions && extraOptions.shouldResolveOnTimeout) {
 
@@ -33,7 +31,7 @@ export default async function(requestOptions: RequestOptions, extraOptions?: {bo
 
       response.on("end", () => {
         
-        if (response.headers["content-type"] === "application/json") {
+        if (response.headers["content-type"]?.includes("application/json")) {
           
           resolve(JSON.parse(responseBody));
           
@@ -54,8 +52,6 @@ export default async function(requestOptions: RequestOptions, extraOptions?: {bo
       request.write(extraOptions.body);
 
     }
-
-    console.log(request);
 
     request.end();
 
