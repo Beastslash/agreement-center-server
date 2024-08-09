@@ -30,16 +30,18 @@ export default async function(requestOptions: RequestOptions, extraOptions?: {bo
       response.on("data", (chunk) => responseBody += chunk);
 
       response.on("end", () => {
-        
-        if (response.headers["content-type"]?.includes("application/json")) {
+
+        const returnedResponse = response.headers["content-type"]?.includes("application/json") || response.headers["content-type"]?.includes("application/vnd.github+json") ? JSON.parse(responseBody) : responseBody;
+
+        if (response.statusCode && response.statusCode < 400 && response.statusCode >= 200) {
           
-          resolve(JSON.parse(responseBody));
+          resolve(returnedResponse);
           
         } else {
 
-          resolve(responseBody);
+          reject(returnedResponse);
 
-        };
+        }
 
       });
 
