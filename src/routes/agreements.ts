@@ -10,7 +10,7 @@ import ForbiddenError from "#utils/errors/ForbiddenError.js";
 import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
 import {readFileSync} from "fs";
-import { generateKey } from "openpgp";
+import openpgp from "openpgp";
 import crypto from "crypto";
 
 const router = Router();
@@ -298,17 +298,15 @@ router.put("/inputs", async (request, response) => {
     }
 
     // 
-    const previousCommitSHA = crypto.createHash("sha1").update(`blob ${agreementInputsResponse.length}\0${agreementInputsResponse}`).digest("hex");
-    const commitInfo = await fetch({
+    const commitList = await fetch({
       host: "api.github.com",
       headers,
       method: "GET",
-      path: `/repos/${githubRepositoryPath}/git/commits/${previousCommitSHA}`,
-    });
+      path: `/repos/${githubRepositoryPath}/commits`,
+    }) as {sha: string; commit: {tree: {sha: string}}}[];
 
-    if (!(commitInfo instanceof Object) || !("tree" in commitInfo) || !(commitInfo.tree instanceof Object) || !("sha" in commitInfo.tree)) throw new Error("Malformed GitHub response.");
-
-    const treeSHA = commitInfo.tree.sha;
+    const commitSHA = commitList[0].sha;
+    const treeSHA = commitList[0].commit.tree.sha;
 
     const jsonContent = JSON.stringify(agreementInputs, null, 2);
     const newTreeInfo = await fetch({
@@ -319,7 +317,7 @@ router.put("/inputs", async (request, response) => {
     }, {
       body: JSON.stringify({
         tree: [{
-          path: "inputs.json",
+          path: `documents/${agreementPath}/inputs.json`,
           mode: "100644",
           type: "blob",
           content: jsonContent
@@ -332,56 +330,103 @@ router.put("/inputs", async (request, response) => {
 
     const newTreeSHA = newTreeInfo.sha;
 
-    // Create a GPG key.
+    // Create a temporary commit so that we can sign it.
     const author = {
       name: `${githubUserID}`,
       email: response.locals.githubEmail
     };
-    const { privateKey, publicKey } = await generateKey({
-      type: "rsa",
-      userIDs: [author],
-      passphrase: process.env.GPG_PASSPHRASE
-    });
 
-    const userAuthorizationHeaders = {
-      ...headers,
-      Authorization: `Bearer ${githubUserAccessToken}`,
-      accept: "application/vnd.github+json"
-    };
-    const gpgKeyInfo = await fetch({
-      host: "api.github.com",
-      headers: userAuthorizationHeaders,
-      method: "POST",
-      path: `/user/gpg_keys`,
-    }, {
-      body: JSON.stringify({
-        name: "Agreement Center GPG key",
-        armored_public_key: publicKey
-      })
-    });
-
-    if (!(gpgKeyInfo instanceof Object) || !("id" in gpgKeyInfo)) throw new Error("Malformed GitHub response");
-
-    const githubResponse = await fetch({
+    const unsignedCommit = await fetch({
       host: "api.github.com",
       headers,
-      method: "PUT",
+      method: "POST",
       path: `/repos/${githubRepositoryPath}/git/commits`,
     }, {
       body: JSON.stringify({
         message: `Update user ${githubUserID}'s inputs`,
         tree: newTreeSHA,
-        author
+        parents: [commitSHA],
+        author,
+        committer: {
+          name: process.env.GIT_COMMIT_NAME,
+          email: process.env.GIT_COMMIT_EMAIL_ADDRESS
+        }
       }, null, 2)
+    }) as {sha: string, message: string};
+
+    // const { privateKey, publicKey } = await openpgp.generateKey({
+    //   type: "rsa",
+    //   userIDs: [author],
+    //   passphrase: process.env.GPG_PASSPHRASE
+    // });
+
+    // const userAuthorizationHeaders = {
+    //   ...headers,
+    //   Authorization: `Bearer ${githubUserAccessToken}`,
+    //   accept: "application/vnd.github+json"
+    // };
+    // const gpgKeyInfo = await fetch({
+    //   host: "api.github.com",
+    //   headers: userAuthorizationHeaders,
+    //   method: "POST",
+    //   path: `/user/gpg_keys`,
+    // }, {
+    //   body: JSON.stringify({
+    //     name: "Agreement Center GPG key",
+    //     armored_public_key: publicKey
+    //   })
+    // });
+
+    // const decryptedPrivateKey = await openpgp.decryptKey({
+    //   privateKey: await openpgp.readPrivateKey({armoredKey: privateKey}),
+    //   passphrase: process.env.GPG_PASSPHRASE
+    // });
+
+    // const armoredSignature = await openpgp.sign({
+    //   message: await openpgp.createMessage({text: unsignedCommit.message}),
+    //   signingKeys: decryptedPrivateKey,
+    //   detached: true
+    // });
+
+    // const signature = await openpgp.readSignature({armoredSignature});
+
+    // const signedCommit = await fetch({
+    //   host: "api.github.com",
+    //   headers,
+    //   method: "POST",
+    //   path: `/repos/${githubRepositoryPath}/git/commits`,
+    // }, {
+    //   body: JSON.stringify({
+    //     message: `Update user ${githubUserID}'s inputs`,
+    //     tree: newTreeSHA,
+    //     parents: [commitSHA],
+    //     author,
+    //     committer: {
+    //       name: process.env.GIT_COMMIT_NAME,
+    //       email: process.env.GIT_COMMIT_EMAIL_ADDRESS
+    //     },
+    //     signature
+    //   }, null, 2)
+    // }) as {sha: string, message: string};
+
+    await fetch({
+      host: "api.github.com",
+      headers,
+      method: "PATCH",
+      path: `/repos/${githubRepositoryPath}/git/refs/heads/main`,
+    }, {
+      body: JSON.stringify({
+        sha: unsignedCommit.sha
+      })
     });
 
     // Delete the GPG key.
-    await fetch({
-      host: "api.github.com",
-      headers: userAuthorizationHeaders,
-      method: "DELETE",
-      path: `/user/gpg_keys/${gpgKeyInfo.id}`,
-    });
+    // await fetch({
+    //   host: "api.github.com",
+    //   headers: userAuthorizationHeaders,
+    //   method: "DELETE",
+    //   path: `/user/gpg_keys/${gpgKeyInfo.id}`,
+    // });
 
     response.json({success: true});
 

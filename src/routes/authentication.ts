@@ -33,6 +33,8 @@ router.get("/", async (request, response) => {
       method: "POST"
     });
 
+    console.log(userAccessTokenResponse);
+
     if (!(userAccessTokenResponse instanceof Object)) {
 
       throw new Error("Malformed GitHub response.");
