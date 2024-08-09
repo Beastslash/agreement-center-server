@@ -10,6 +10,7 @@ import ForbiddenError from "#utils/errors/ForbiddenError.js";
 import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
 import {readFileSync} from "fs";
+import crypto from "crypto";
 
 const router = Router();
 
@@ -97,6 +98,36 @@ router.use(async (request, response, next) => {
 
     }
     
+    async function getGitHubUserEmail() {
+
+      const githubUserAccessToken = request.headers["github-user-access-token"];
+      if (typeof(githubUserAccessToken) !== "string") {
+    
+        throw new MissingHeaderError("github-user-access-token");
+    
+      }
+    
+      const userResponse = await fetch({
+        host: "api.github.com",
+        path: `/user/emails`,
+        headers: {
+          Authorization: `Bearer ${githubUserAccessToken}`,
+          "user-agent": "Agreement-Center"
+        },
+        port: 443
+      });
+    
+      if (!(userResponse instanceof Array)) {
+    
+        throw new Error("Malformed response received from GitHub.");
+    
+      }
+
+      return userResponse[0].email;
+
+    }
+
+    response.locals.githubEmail = await getGitHubUserEmail();
     response.locals.githubUserID = await getGitHubUserID();
     response.locals.githubInstallationAccessToken = await getInstallationAccessToken();
 
@@ -232,50 +263,63 @@ router.put("/inputs", async (request, response) => {
 
     // Update the input values
     const githubRepositoryPath = process.env.REPOSITORY;
-    const { githubAppAccessToken, agreementPath, githubUserID } = response.locals;
-    const headers = {Authorization: `Bearer ${githubAppAccessToken}`};
+    const { githubInstallationAccessToken, agreementPath, githubUserID } = response.locals;
+    const headers = {
+      Authorization: `Bearer ${githubInstallationAccessToken}`, 
+      "user-agent": "Agreement-Center", 
+      accept: "application/vnd.github.v3.raw"
+    };
     const agreementInputsResponse = await fetch({
       host: "api.github.com",
       headers,
-      path: `/repos/${githubRepositoryPath}/contents/${agreementPath}/inputs.json`
+      path: `/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`
     });
 
-    const contentHasProblem = !(agreementInputsResponse instanceof Object) || !("content" in agreementInputsResponse) || typeof(agreementInputsResponse.content) !== "string";
+    const contentHasProblem = typeof(agreementInputsResponse) !== "string";
     if (contentHasProblem) throw new Error("Content received from GitHub wasn't a string.");
 
-    const agreementInputs = JSON.parse(agreementInputsResponse.content as string);
+    const agreementInputs = JSON.parse(agreementInputsResponse);
     const newInputPairs = request.body;
-    if (!(newInputPairs instanceof Array)) throw new BadRequestError("Inputs property is not an array.");
+    if (!(newInputPairs instanceof Object)) throw new BadRequestError("Inputs property is not an object.");
 
-    for (let i = 0; newInputPairs.length > i; i++) {
+    for (const index of Object.keys(newInputPairs)) {
 
-      const { index, value } = newInputPairs[i];
-      if (!agreementInputs.hasOwnProperty(index)) throw new InputNotFoundAtIndexError(index);
+      const indexInt = parseInt(index, 10);
+      const value = newInputPairs[indexInt];
+      if (!agreementInputs.hasOwnProperty(indexInt)) throw new InputNotFoundAtIndexError(indexInt);
 
-      const doesUserHavePermissionToChangeInput = agreementInputs[index].ownerID === githubUserID;
-      if (!doesUserHavePermissionToChangeInput) throw new ForbiddenError(`User doesn't have permission to change input ${index}.`);
+      const doesUserHavePermissionToChangeInput = agreementInputs[indexInt].ownerID === githubUserID;
+      if (!doesUserHavePermissionToChangeInput) throw new ForbiddenError(`User doesn't have permission to change input ${indexInt}.`);
 
-      agreementInputs[index].value = value;
+      agreementInputs[indexInt].value = value;
 
     }
 
-    await fetch({
+    const jsonContent = JSON.stringify(agreementInputs, null, 2);
+    const githubResponse = await fetch({
       host: "api.github.com",
       headers,
       method: "PUT",
-      path: `/repos/${githubRepositoryPath}/contents/${agreementPath}/inputs.json`,
+      path: `/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`,
     }, {
       body: JSON.stringify({
-        message: `Update user ${githubUserID}'s inputs.`,
-        content: JSON.stringify(agreementInputs)
+        message: `Update user ${githubUserID}'s inputs`,
+        content: btoa(jsonContent),
+        sha: crypto.createHash("sha1").update(`blob ${agreementInputsResponse.length}\0${agreementInputsResponse}`).digest("hex"),
+        committer: {
+          name: `${githubUserID}`,
+          email: response.locals.githubEmail
+        }
       }, null, 2)
     });
 
-    response.sendStatus(200);
+    console.log(githubResponse);
+
+    response.json({success: true});
 
   } catch (error: unknown) {
 
-    if (error instanceof BadRequestError || error instanceof InputNotFoundAtIndexError || error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
+    if (error instanceof BadRequestError || error instanceof ForbiddenError || error instanceof InputNotFoundAtIndexError || error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
 
       response.status(error.statusCode).json({
         message: error.message
