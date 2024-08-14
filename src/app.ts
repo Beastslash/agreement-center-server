@@ -12,6 +12,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.disable("x-powered-by");
+app.set('trust proxy', true);
 app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);
 
