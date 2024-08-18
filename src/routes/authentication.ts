@@ -3,12 +3,12 @@
 // This UAT can be safely stored on the client, as there are no permissions.
 
 import BadRequestError from "#utils/errors/BadRequestError.js";
+import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import fetch from "#utils/fetch.js";
+import getGitHubUserEmails from "#utils/getGitHubUserEmails.js";
 import { Router } from "express";
 
 const router = Router();
-
-
 
 router.get("/", async (request, response) => {
 
@@ -46,6 +46,36 @@ router.get("/", async (request, response) => {
   } catch (error: unknown) {
 
     if (error instanceof BadRequestError) {
+
+      response.status(error.statusCode).json({
+        message: error.message
+      });
+
+    } else {
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Internal server error."
+      });
+
+    }
+
+  }
+
+});
+
+router.get("/email-addresses", async (request, response) => {
+
+  try {
+
+    // Verify that we have a code.
+    const emailAddressData = await getGitHubUserEmails(request);
+    response.json(emailAddressData)
+
+  } catch (error: unknown) {
+
+    if (error instanceof MissingHeaderError) {
 
       response.status(error.statusCode).json({
         message: error.message
