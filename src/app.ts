@@ -12,7 +12,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 app.disable("x-powered-by");
-app.set('trust proxy', true);
 app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);
 
@@ -21,4 +20,4 @@ const server = createServer({
   key: readFileSync("./security/localhost.key"),
   cert: readFileSync("./security/localhost.pem")
 }, app);
-server.listen(port, () => console.log(`Application Center is now listening on port ${port}.`));
+server.listen(port, () => console.log(`\x1b[32mApplication Center is now listening on port ${port}.`));

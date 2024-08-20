@@ -13,6 +13,7 @@ import {readFileSync} from "fs";
 import openpgp from "openpgp";
 import getGitHubUserEmails from "#utils/getGitHubUserEmails.js";
 import { randomBytes } from "crypto";
+import { getCache } from "#utils/cache.js";
 
 const router = Router();
 
@@ -163,19 +164,48 @@ router.get("/", async (request, response) => {
 
   try {
 
+    // Verify the user's verification code if they have one.
+    type Event = {
+      timestamp: number;
+      ipAddress: string;
+    }
+
+    const { mode } = request.query;
+    let viewEvent: Event | null = null;
+    if (mode === "sign") {
+      
+      const { verification_code, email_address } = request.query;
+      if (!(typeof(verification_code) === "string" && typeof(email_address) === "string")) throw new Error("Verification code and email address are required.");
+      if (getCache("verificationInfo")[email_address]?.verificationCode !== verification_code) throw new Error();
+      if (!request.ip) throw new Error("request.ip is undefined.");
+
+      viewEvent = {
+        timestamp: new Date().getTime(),
+        ipAddress: request.ip
+      }
+
+    }
+
+    // Add the codes.
     const { githubInstallationAccessToken, githubUserID, agreementPath } = response.locals;
-    const getFileContents = async (path: string) => await fetch({
+    const defaultHeaders = {
+      Authorization: `Bearer ${githubInstallationAccessToken}`, 
+      "user-agent": "Agreement-Center", 
+      accept: "application/vnd.github.v3.raw"
+    }
+    const getFileContents = async (path: string, shouldGetSHA?: boolean) => await fetch({
       host: "api.github.com", 
       headers: {
-        Authorization: `Bearer ${githubInstallationAccessToken}`, 
-        "user-agent": "Agreement-Center", 
-        accept: "application/vnd.github.v3.raw"
-      }, 
+        ...defaultHeaders,
+        accept: shouldGetSHA ? "application/json" : defaultHeaders.accept
+      },
+      port: 443, 
       path
     });
+
+    const { REPOSITORY: githubRepositoryPath } = process.env;
     async function getUserAgreementIDs(): Promise<string[]> {
 
-      const githubRepositoryPath = process.env.REPOSITORY;
       const agreementIDsEncoded = await getFileContents(`/repos/${githubRepositoryPath}/contents/index/${githubUserID}.json`) as string;
       return JSON.parse(agreementIDsEncoded);
 
@@ -184,20 +214,41 @@ router.get("/", async (request, response) => {
     if (!(await getUserAgreementIDs()).includes(agreementPath)) throw new AgreementNotFoundError();
   
     // Add a viewing event.
-    type Event = {
-      timestamp: number;
-      ipAddress: string;
+    type Events = {
+      [key: string]: {
+        view?: Event;
+        sign?: Event;
+        void?: Event;
+      }
+    };
+    const agreementEventsInfo = await getFileContents(`/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, true) as {sha: string; content: string};
+    const agreementEvents = JSON.parse(atob(agreementEventsInfo.content)) as Events;
+    
+    if (viewEvent) {
+
+      await fetch({
+        host: "api.github.com", 
+        port: 443,
+        headers: defaultHeaders,
+        path: `/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`,
+        method: "PUT",
+      }, {
+        body: JSON.stringify({
+          message: "Add view event",
+          sha: agreementEventsInfo.sha,
+          content: {
+            ...agreementEvents,
+            [githubUserID]: {
+              ...agreementEvents[githubUserID],
+              view: viewEvent
+            }
+          }
+        })
+      })
+
     }
 
-    type Events = {[key: string]: {
-      view?: Event;
-      sign?: Event;
-      void?: Event;
-    }};
-    const agreementEvents = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/events.json`) as Events;
-
-
-    // Return the agreement, its inputs, and its permisssions.
+    // Return the agreement, its inputs, and its permissions.
     const agreementText = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/README.md`);
     const agreementInputs = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/inputs.json`);
     const agreementPermissions = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/permissions.json`);
