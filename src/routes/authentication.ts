@@ -5,67 +5,11 @@
 import { getCache, setCache } from "#utils/cache.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
 import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
-import fetch from "#utils/fetch.js";
-import getGitHubUserEmails from "#utils/getGitHubUserEmails.js";
+import { randomBytes } from "crypto";
 import { Router } from "express";
 import { createTransport as createSMTPTransport } from "nodemailer";
 
 const router = Router();
-
-router.get("/", async (request, response) => {
-
-  try {
-
-    // Verify that we have a code.
-    const {code: githubAuthenticationCode, refresh_token: githubRefreshToken } = request.query;
-    if (!githubAuthenticationCode && !githubRefreshToken) {
-
-      throw new BadRequestError("GitHub authentication code or refresh token required.");
-
-    }
-
-    // Get a user access token from the temporary code.
-    const userAccessTokenResponse = await fetch({
-      host: "github.com",
-      path: `/login/oauth/access_token?client_id=${process.env.CLIENT_ID}&client_secret=${process.env.CLIENT_SECRET}&${githubRefreshToken ? `refresh_token=${githubRefreshToken}` : `code=${githubAuthenticationCode}`}`,
-      port: 443,
-      headers: {
-        Accept: "application/json"
-      },
-      method: "POST"
-    });
-
-    console.log(userAccessTokenResponse);
-
-    if (!(userAccessTokenResponse instanceof Object)) {
-
-      throw new Error("Malformed GitHub response.");
-
-    }
-
-    response.status(userAccessTokenResponse.hasOwnProperty("access_token") ? 200 : 400).json(userAccessTokenResponse)
-
-  } catch (error: unknown) {
-
-    if (error instanceof BadRequestError) {
-
-      response.status(error.statusCode).json({
-        message: error.message
-      });
-
-    } else {
-
-      console.error(error);
-
-      response.status(500).json({
-        message: "Internal server error."
-      });
-
-    }
-
-  }
-
-});
 
 router.post("/verification-code", async (request, response) => {
 
@@ -80,6 +24,7 @@ router.post("/verification-code", async (request, response) => {
     if (typeof(email_address) !== "string") throw new BadRequestError("email_address needs to be a string.");
 
     // Send a verification code to the selected email.
+    console.log("\x1b[34mSending a verification code to the user's selected email address...\x1b[0m");
     const { SMTP_SERVER, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD } = process.env;
     if (!(SMTP_SERVER && SMTP_PORT && SMTP_USERNAME && SMTP_PASSWORD)) throw new Error("An SMTP environment variable is missing.")
 
@@ -118,6 +63,8 @@ router.post("/verification-code", async (request, response) => {
       )
     });
 
+    console.log(`\x1b[32mSuccessfully sent an email to the user.\x1b[0m`);
+
     setCache("verificationInfo", {
       ...getCache("verificationInfo"),
       [email_address]: {
@@ -132,13 +79,19 @@ router.post("/verification-code", async (request, response) => {
 
     if (error instanceof MissingHeaderError || error instanceof BadRequestError) {
 
+      console.log(`\x1b[33mA user's request to create an verification code failed: ${error.message}\x1b[0m`);
+
       response.status(error.statusCode).json({
         message: error.message
       });
 
     } else {
 
-      console.error(error);
+      if (error instanceof Error) {
+
+        console.error(`\x1b[31mAn unknown error occurred:\n${error.stack}\x1b[0m`);
+
+      }
 
       response.status(500).json({
         message: "Internal server error."
@@ -150,17 +103,41 @@ router.post("/verification-code", async (request, response) => {
 
 });
 
-router.get("/email-addresses", async (request, response) => {
+router.post("/access-token", async (request, response) => {
+
+  console.log("A user requested the server to create an access token.");
 
   try {
 
-    // Verify that we have a code.
-    const emailAddressData = await getGitHubUserEmails(request);
-    response.json(emailAddressData)
+    // Confirm the user's verification code.
+    const emailAddress = request.headers["email-address"];
+    if (typeof(emailAddress) !== "string") throw new MissingHeaderError("email-address");
 
-  } catch (error: unknown) {
+    const verificationCode = request.headers["verification-code"];
+    if (typeof(verificationCode) !== "string") throw new MissingHeaderError("verification-code");
 
-    if (error instanceof MissingHeaderError) {
+    const verificationInfo = getCache("verificationInfo");
+    const correctVerificationCode = verificationInfo[emailAddress]?.verificationCode;
+    if (!correctVerificationCode || verificationCode !== correctVerificationCode) throw new BadRequestError("A correct verification code and email address pairing is required.");
+
+    // Delete the OTP.
+    delete verificationInfo[emailAddress];
+    setCache("verificationInfo", verificationInfo);
+
+    // Create the access token and return it to the user.
+    const accessToken = randomBytes(32).toString("hex");
+    setCache("emailAddresses", {
+      ...getCache("emailAddresses"),
+      [accessToken]: emailAddress
+    });
+
+    return response.status(201).json(accessToken);
+
+  } catch (error) {
+
+    if (error instanceof MissingHeaderError || error instanceof BadRequestError) {
+
+      console.log(`\x1b[33mA user's request to create an access token failed: ${error.message}\x1b[0m`);
 
       response.status(error.statusCode).json({
         message: error.message
@@ -168,7 +145,11 @@ router.get("/email-addresses", async (request, response) => {
 
     } else {
 
-      console.error(error);
+      if (error instanceof Error) {
+
+        console.error(`\x1b[31mAn unknown error occurred:\n${error.stack}\x1b[0m`);
+
+      }
 
       response.status(500).json({
         message: "Internal server error."

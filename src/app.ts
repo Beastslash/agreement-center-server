@@ -20,4 +20,4 @@ const server = createServer({
   key: readFileSync("./security/localhost.key"),
   cert: readFileSync("./security/localhost.pem")
 }, app);
-server.listen(port, () => console.log(`\x1b[32mApplication Center is now listening on port ${port}.`));
+server.listen(port, () => console.log(`\x1b[32mApplication Center is now listening on port ${port}.\x1b[0m`));

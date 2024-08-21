@@ -11,9 +11,8 @@ import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.j
 import BadRequestError from "#utils/errors/BadRequestError.js";
 import {readFileSync} from "fs";
 import openpgp from "openpgp";
-import getGitHubUserEmails from "#utils/getGitHubUserEmails.js";
-import { randomBytes } from "crypto";
 import { getCache } from "#utils/cache.js";
+import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
 
 const router = Router();
 
@@ -21,35 +20,6 @@ const router = Router();
 router.use(async (request, response, next) => {
 
   try {
-
-    async function getGitHubUserID() {
-
-      const githubUserAccessToken = request.headers["github-user-access-token"];
-      if (typeof(githubUserAccessToken) !== "string") {
-    
-        throw new MissingHeaderError("github-user-access-token");
-    
-      }
-    
-      const userResponse = await fetch({
-        host: "api.github.com",
-        path: `/user`,
-        headers: {
-          Authorization: `Bearer ${githubUserAccessToken}`,
-          "user-agent": "Agreement-Center"
-        },
-        port: 443
-      });
-    
-      if (!(userResponse instanceof Object) || !("id" in userResponse) || typeof(userResponse.id) !== "number") {
-    
-        throw new Error("Malformed response received from GitHub.");
-    
-      }
-
-      return userResponse.id;
-
-    }
 
     async function getInstallationAccessToken(): Promise<string> {
 
@@ -100,16 +70,20 @@ router.use(async (request, response, next) => {
 
     }
 
-    response.locals.githubUserAccessToken = request.headers["github-user-access-token"];
-    response.locals.githubEmails = await getGitHubUserEmails(request);
-    response.locals.githubUserID = await getGitHubUserID();
+    const accessToken = request.headers["access-token"];
+    if (typeof(accessToken) !== "string") throw new UnauthenticatedError();
+
+    const emailAddress = getCache("emailAddresses")[accessToken];
+    if (!emailAddress) throw new UnauthenticatedError();
+
+    response.locals.emailAddress = emailAddress;
     response.locals.githubInstallationAccessToken = await getInstallationAccessToken();
 
     next();
 
   } catch (error: unknown) {
 
-    if (error instanceof MissingHeaderError) {
+    if (error instanceof MissingHeaderError || error instanceof UnauthenticatedError) {
 
       response.status(error.statusCode).json({
         message: error.message
@@ -164,6 +138,8 @@ router.get("/", async (request, response) => {
 
   try {
 
+    console.log("A user requested to get an agreement's text and inputs.")
+
     // Verify the user's verification code if they have one.
     type Event = {
       timestamp: number;
@@ -173,10 +149,7 @@ router.get("/", async (request, response) => {
     const { mode } = request.query;
     let viewEvent: Event | null = null;
     if (mode === "sign") {
-      
-      const { verification_code, email_address } = request.query;
-      if (!(typeof(verification_code) === "string" && typeof(email_address) === "string")) throw new Error("Verification code and email address are required.");
-      if (getCache("verificationInfo")[email_address]?.verificationCode !== verification_code) throw new Error();
+
       if (!request.ip) throw new Error("request.ip is undefined.");
 
       viewEvent = {
@@ -264,6 +237,8 @@ router.get("/", async (request, response) => {
 
     if (error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
 
+      console.log(`\x1b[33mA user's request to get an agreement's text and inputs failed: ${error.message}\x1b[0m`);
+
       response.status(error.statusCode).json({
         message: error.message
       });
@@ -282,19 +257,13 @@ router.get("/", async (request, response) => {
 
 });
 
-const codeInfo: {[code: string]: {
-  newTreeSHA: string;
-  commitSHA: string;
-  unsignedCommitSHA: string;
-}} = {}
-
 router.put("/inputs", async (request, response) => {
 
   try {
 
     // Update the input values
     const githubRepositoryPath = process.env.REPOSITORY;
-    const { githubInstallationAccessToken, agreementPath, githubUserID, githubUserAccessToken } = response.locals;
+    const { githubInstallationAccessToken, agreementPath, emailAddress } = response.locals;
     const headers = {
       Authorization: `Bearer ${githubInstallationAccessToken}`, 
       "user-agent": "Agreement-Center", 
@@ -319,130 +288,43 @@ router.put("/inputs", async (request, response) => {
       const value = newInputPairs[indexInt];
       if (!agreementInputs.hasOwnProperty(indexInt)) throw new InputNotFoundAtIndexError(indexInt);
 
-      const doesUserHavePermissionToChangeInput = agreementInputs[indexInt].ownerID === githubUserID;
+      const doesUserHavePermissionToChangeInput = agreementInputs[indexInt].ownerEmailAddress === emailAddress;
       if (!doesUserHavePermissionToChangeInput) throw new ForbiddenError(`User doesn't have permission to change input ${indexInt}.`);
 
       agreementInputs[indexInt].value = value;
 
     }
-
-    const { query: {code} } = request;
-    const emailAddress = request.headers["email-address"];
-    const author = {
-      name: `${githubUserID}`,
-      email: emailAddress
-    };
-    if (code) {
-
-      if (typeof(code) !== "string" || !codeInfo[code]) {
-
-        throw new BadRequestError("Invalid code");
-
-      }
   
-      // Push the signed commit to the repository.
-      const armoredSignature = request.headers["armored-signature"];
-      if (!armoredSignature || typeof(armoredSignature) !== "string") throw new MissingHeaderError("armored-signature");
-      const signature = await openpgp.readSignature({armoredSignature});
-  
-      const signedCommit = await fetch({
-        host: "api.github.com",
-        headers,
-        method: "POST",
-        path: `/repos/${githubRepositoryPath}/git/commits`,
-      }, {
-        body: JSON.stringify({
-          message: `Update user ${githubUserID}'s inputs`,
-          tree: codeInfo[code].newTreeSHA,
-          parents: [codeInfo.commitSHA],
-          author,
-          committer: {
-            name: process.env.GIT_COMMIT_NAME,
-            email: process.env.GIT_COMMIT_EMAIL_ADDRESS
-          },
-          signature
-        }, null, 2)
-      }) as {sha: string, message: string};
-  
-      await fetch({
-        host: "api.github.com",
-        headers,
-        method: "PATCH",
-        path: `/repos/${githubRepositoryPath}/git/refs/heads/main`,
-      }, {
-        body: JSON.stringify({
-          sha: codeInfo[code].unsignedCommitSHA
-        })
-      });
-  
-      // Delete the GPG key.
-      delete codeInfo[code];
-      response.json({success: true});
+    // Push the signed commit to the repository.
+    const armoredSignature = request.headers["armored-signature"];
+    if (!armoredSignature || typeof(armoredSignature) !== "string") throw new MissingHeaderError("armored-signature");
+    const signature = await openpgp.readSignature({armoredSignature});
 
-    } else {
-
-      const commitList = await fetch({
-        host: "api.github.com",
-        headers,
-        method: "GET",
-        path: `/repos/${githubRepositoryPath}/commits`,
-      }) as {sha: string; commit: {tree: {sha: string}}}[];
-
-      const commitSHA = commitList[0].sha;
-      const treeSHA = commitList[0].commit.tree.sha;
-
-      const jsonContent = JSON.stringify(agreementInputs, null, 2);
-      const newTreeInfo = await fetch({
-        host: "api.github.com",
-        headers,
-        method: "POST",
-        path: `/repos/${githubRepositoryPath}/git/trees`,
-      }, {
-        body: JSON.stringify({
-          tree: [{
-            path: `documents/${agreementPath}/inputs.json`,
-            mode: "100644",
-            type: "blob",
-            content: jsonContent
-          }],
-          base_tree: treeSHA
-        })
-      }) as {sha: string};
-
-      if (!(newTreeInfo instanceof Object) || !("sha" in newTreeInfo)) throw new Error("Malformed GitHub response.");
-
-      const newTreeSHA = newTreeInfo.sha;
-
-      // Create a temporary commit so that the client can sign it.
-      const commitMessage = `Update user ${githubUserID}'s inputs`;
-      const unsignedCommit = await fetch({
-        host: "api.github.com",
-        headers,
-        method: "POST",
-        path: `/repos/${githubRepositoryPath}/git/commits`,
-      }, {
-        body: JSON.stringify({
-          message: commitMessage,
-          tree: newTreeSHA,
-          parents: [commitSHA],
-          author,
-          committer: {
-            name: process.env.GIT_COMMIT_NAME,
-            email: process.env.GIT_COMMIT_EMAIL_ADDRESS
-          }
-        }, null, 2)
-      }) as {sha: string, message: string};
-
-      const code = randomBytes(48).toString("hex");
-      codeInfo[code] = {newTreeSHA, commitSHA, unsignedCommitSHA: unsignedCommit.sha}
-      response.json({commitMessage, code});
-
-    }
+    // const signedCommit = await fetch({
+    //   host: "api.github.com",
+    //   headers,
+    //   method: "POST",
+    //   path: `/repos/${githubRepositoryPath}/git/commits`,
+    // }, {
+    //   body: JSON.stringify({
+    //     message: `Update user ${githubUserID}'s inputs`,
+    //     tree: codeInfo[code].newTreeSHA,
+    //     parents: [codeInfo.commitSHA],
+    //     author,
+    //     committer: {
+    //       name: process.env.GIT_COMMIT_NAME,
+    //       email: process.env.GIT_COMMIT_EMAIL_ADDRESS
+    //     },
+    //     signature
+    //   }, null, 2)
+    // }) as {sha: string, message: string};
 
   } catch (error: unknown) {
 
     if (error instanceof BadRequestError || error instanceof ForbiddenError || error instanceof InputNotFoundAtIndexError || error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
 
+      console.log(`\x1b[33mA user's request to update agreement input values failed: ${error.message}\x1b[0m`);
+      
       response.status(error.statusCode).json({
         message: error.message
       });
