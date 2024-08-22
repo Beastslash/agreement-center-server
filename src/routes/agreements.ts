@@ -7,7 +7,6 @@ import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import ForbiddenError from "#utils/errors/ForbiddenError.js";
 import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
-import openpgp from "openpgp";
 import { getCache } from "#utils/cache.js";
 import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
 import getGitHubInstallationAccessToken from "#utils/getGitHubInstallationAccessToken.js";
@@ -53,7 +52,52 @@ router.use(async (request, response, next) => {
 
 });
 
-// List all agreements that the authorized user has access to.
+
+type Event = {
+  timestamp: number;
+  encryptedIPAddress: string | null;
+}
+
+type Events = {
+  [key: string]: {
+    receive?: Event;
+    view?: Event;
+    sign?: Event;
+    void?: Event;
+  }
+};
+
+async function getFileContents(headers: {[key: string]: string}, githubRepositoryPath: string, agreementPath: string, fileName: string) {
+      
+  const response = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/${fileName}`, {headers});
+  return response;
+
+}
+
+async function getAgreementEvents(headers: any, githubRepositoryPath: string, agreementPath: string) {
+
+  const { sha, content } = await (await getFileContents({...headers, accept: "application/json"}, githubRepositoryPath, agreementPath, "events.json")).json() as {sha: string; content: string};
+  const agreementEvents = JSON.parse(atob(content)) as Events;
+
+  return {
+    sha,
+    events: agreementEvents
+  }
+
+}
+
+async function isAgreementPathInUserIndex(headers: any, githubRepositoryPath: string, emailAddress: string, agreementPath: string): Promise<boolean> {
+  
+  const agreementIDsResponse = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/index/${emailAddress}.json`, {headers});
+  const agreementIDs = await agreementIDsResponse.json();
+
+  if (!agreementIDsResponse.ok || !(agreementIDs instanceof Array)) throw new Error("Malformed response received from GitHub.");
+
+  return agreementIDs.includes(agreementPath);
+
+}
+
+// List all agreements that the authorized user has access to
 router.get("/", async (request, response) => {
 
   try {
@@ -149,6 +193,26 @@ router.get("/", async (request, response) => {
 
 });
 
+async function updateAgreementEvents(headers: any, eventsSHA: string, githubRepositoryPath: string, agreementPath: string, newEvents: {[emailAddress: string]: Events}) {
+
+  const response = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, {
+    headers,
+    method: "PUT",
+    body: JSON.stringify({
+      message: "Update events",
+      sha: eventsSHA,
+      content: btoa(JSON.stringify(newEvents, null, 2))
+    })
+  });
+
+  if (!response.ok) {
+
+    throw new Error(await response.json());
+
+  }
+
+}
+
 // Get agreement text and inputs.
 // Upserts a view event if ?mode=sign.
 router.get("/:projectName/:agreementName", async (request, response) => {
@@ -158,11 +222,6 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     console.log("A user requested to get an agreement's text and inputs.")
 
     // Verify the user's verification code if they have one.
-    type Event = {
-      timestamp: number;
-      encryptedIPAddress: string;
-    }
-
     const { mode } = request.query;
     let viewEvent: Event | null = null;
     if (mode === "sign") {
@@ -179,71 +238,37 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     // Add the codes.
     const { projectName, agreementName } = request.params;
     const { githubInstallationAccessToken, emailAddress } = response.locals;
-    const defaultHeaders = {
+    const headers = {
       Authorization: `Bearer ${githubInstallationAccessToken}`, 
       "user-agent": "Agreement-Center", 
       accept: "application/vnd.github.raw+json"
     }
     const { GITHUB_REPOSITORY_NAME, GITHUB_REPOSITORY_OWNER_NAME } = process.env;
     const githubRepositoryPath = `${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}`;
-    const getFileContents = async (path: string, shouldGetSHA?: boolean) => {
-      
-      const response = await fetch(`https://api.github.com/${path}`, {
-        headers: {
-          ...defaultHeaders,
-          accept: shouldGetSHA ? "application/json" : defaultHeaders.accept
-        }
-      });
-
-      return response;
-
-    }
+    
 
     const agreementPath = `${projectName}/${agreementName}`;
-    const agreementIDs = await (await getFileContents(`repos/${githubRepositoryPath}/contents/index/${emailAddress}.json`)).json();
-    if (!agreementIDs.includes(agreementPath)) throw new AgreementNotFoundError();
+    if (!await isAgreementPathInUserIndex(headers, githubRepositoryPath, emailAddress, agreementPath)) throw new AgreementNotFoundError();
   
     // Add a viewing event.
-    type Events = {
-      [key: string]: {
-        view?: Event;
-        sign?: Event;
-        void?: Event;
-      }
-    };
-    const agreementEventsInfo = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, true)).json() as {sha: string; content: string};
-    const agreementEvents = JSON.parse(atob(agreementEventsInfo.content)) as Events;
+    const { sha: eventsSHA, events } = await getAgreementEvents(headers, githubRepositoryPath, agreementPath);
     
     if (viewEvent) {
 
-      const response = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, {
-        headers: defaultHeaders,
-        method: "PUT",
-        body: JSON.stringify({
-          message: "Add view event",
-          sha: agreementEventsInfo.sha,
-          content: btoa(JSON.stringify({
-            ...agreementEvents,
-            [emailAddress]: {
-              ...agreementEvents[emailAddress],
-              view: viewEvent
-            }
-          }, null, 2))
-        })
+      await updateAgreementEvents(headers, eventsSHA, githubRepositoryPath, agreementPath, {
+        ...events,
+        [emailAddress]: {
+          ...events[emailAddress],
+          view: viewEvent
+        }
       });
-
-      if (!response.ok) {
-
-        throw new Error(await response.json());
-
-      }
 
     }
 
     // Return the agreement, its inputs, and its permissions.
-    const agreementText = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/README.md`)).text();
-    const agreementInputs = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`)).json();
-    const agreementPermissions = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/permissions.json`)).json();
+    const agreementText = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "README.md")).text();
+    const agreementInputs = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "inputs.json")).json();
+    const agreementPermissions = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "permissions.json")).json();
 
     response.setHeader("email-address", emailAddress);
 
@@ -277,25 +302,34 @@ router.get("/:projectName/:agreementName", async (request, response) => {
 
 });
 
-router.put("/:projectName/:agreementName/inputs", async (request, response) => {
+router.put("/:projectName/:agreementName/sign", async (request, response) => {
 
   try {
 
-    // Update the input values
-    const githubRepositoryPath = process.env.REPOSITORY;
-    const { githubInstallationAccessToken, agreementPath, emailAddress } = response.locals;
+    // Verify that there's a view and receive event.
+    const { GITHUB_REPOSITORY_NAME, GITHUB_REPOSITORY_OWNER_NAME } = process.env;
+    const githubRepositoryPath = `${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}`;
+    const { githubInstallationAccessToken, emailAddress } = response.locals;
+    const { projectName, agreementName } = request.params;
+    const agreementPath = `${projectName}/${agreementName}`;
     const headers = {
       Authorization: `Bearer ${githubInstallationAccessToken}`, 
       "user-agent": "Agreement-Center", 
-      accept: "application/vnd.github.v3.raw"
+      accept: "application/json"
     };
+    const { sha: eventsSHA, events } = await getAgreementEvents(headers, githubRepositoryPath, agreementPath);
+    
+    const personalEvents = events[emailAddress];
+    if (!(personalEvents && personalEvents.receive && personalEvents.view)) throw new BadRequestError("You need to receive and view this agreement first.");
+    if (personalEvents.sign && personalEvents.sign.timestamp) throw new ForbiddenError("You already signed this agreement, so you can't sign it again.");
+
+    // Update the input values
     const agreementInputsResponse = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`, {headers});
-    const agreementInputsResponseJSON = await agreementInputsResponse.json();
+    if (!agreementInputsResponse.ok) throw new Error("Something bad happened with GitHub.");
 
-    const contentHasProblem = typeof(agreementInputsResponseJSON) !== "string";
-    if (contentHasProblem) throw new Error("Content received from GitHub wasn't a string.");
+    const { content: inputsBase64, sha: inputsSHA } = await agreementInputsResponse.json();
+    const agreementInputs = JSON.parse(atob(inputsBase64));
 
-    const agreementInputs = JSON.parse(agreementInputsResponseJSON);
     const newInputPairs = request.body;
     if (!(newInputPairs instanceof Object)) throw new BadRequestError("Inputs property is not an object.");
 
@@ -305,36 +339,49 @@ router.put("/:projectName/:agreementName/inputs", async (request, response) => {
       const value = newInputPairs[indexInt];
       if (!agreementInputs.hasOwnProperty(indexInt)) throw new InputNotFoundAtIndexError(indexInt);
 
-      const doesUserHavePermissionToChangeInput = agreementInputs[indexInt].ownerEmailAddress === emailAddress;
+      const doesUserHavePermissionToChangeInput = agreementInputs[indexInt].ownerID === emailAddress;
       if (!doesUserHavePermissionToChangeInput) throw new ForbiddenError(`User doesn't have permission to change input ${indexInt}.`);
 
       agreementInputs[indexInt].value = value;
 
     }
   
-    // Push the signed commit to the repository.
-    const armoredSignature = request.headers["armored-signature"];
-    if (!armoredSignature || typeof(armoredSignature) !== "string") throw new MissingHeaderError("armored-signature");
-    const signature = await openpgp.readSignature({armoredSignature});
+    // Update the inputs.
+    const inputUpdateResponse = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`, {
+      headers,
+      method: "PUT",
+      body: JSON.stringify({
+        message: `Add inputs from ${emailAddress}`,
+        sha: inputsSHA,
+        content: btoa(JSON.stringify(agreementInputs, null, 2))
+      })
+    });
+  
+    if (!inputUpdateResponse.ok) {
+  
+      throw new Error(await inputUpdateResponse.text());
+  
+    }
 
-    // const signedCommit = await fetch({
-    //   host: "api.github.com",
-    //   headers,
-    //   method: "POST",
-    //   path: `/repos/${githubRepositoryPath}/git/commits`,
-    // }, {
-    //   body: JSON.stringify({
-    //     message: `Update user ${githubUserID}'s inputs`,
-    //     tree: codeInfo[code].newTreeSHA,
-    //     parents: [codeInfo.commitSHA],
-    //     author,
-    //     committer: {
-    //       name: process.env.GIT_COMMIT_NAME,
-    //       email: process.env.GIT_COMMIT_EMAIL_ADDRESS
-    //     },
-    //     signature
-    //   }, null, 2)
-    // }) as {sha: string, message: string};
+    console.log(`\x1b[32mSuccessfully updated a user's agreement inputs.\x1b[0m`);
+
+    // Update the events.
+    const signEvent = {
+      timestamp: new Date().getTime(),
+      encryptedIPAddress: request.ip ? crypto.AES.encrypt(request.ip, process.env.ENCRYPTION_PASSWORD as string).toString() : null
+    };
+
+    await updateAgreementEvents(headers, eventsSHA, githubRepositoryPath, agreementPath, {
+      ...events,
+      [emailAddress]: {
+        ...events[emailAddress],
+        sign: signEvent
+      }
+    });
+
+    console.log(`\x1b[32mSuccessfully updated a user's agreement events.\x1b[0m`);
+
+    response.json({success: true});
 
   } catch (error: unknown) {
 
