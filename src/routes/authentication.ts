@@ -8,6 +8,8 @@ import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import { randomBytes } from "crypto";
 import { Router } from "express";
 import { createTransport as createSMTPTransport } from "nodemailer";
+import EmailAddressNotAuthorizedError from "#utils/errors/EmailAddressNotAuthorizedError.js";
+import getGitHubInstallationAccessToken from "#utils/getGitHubInstallationAccessToken.js";
 
 const router = Router();
 
@@ -20,8 +22,24 @@ router.post("/verification-code", async (request, response) => {
     // Enforce rate limits.
 
     // Ensure the selected email is a verified email.
-    const { email_address } = request.query;
-    if (typeof(email_address) !== "string") throw new BadRequestError("email_address needs to be a string.");
+    const emailAddress = request.headers["email-address"];
+    if (typeof(emailAddress) !== "string") throw new BadRequestError("email_address needs to be a string.");
+
+    const githubInstallationAccessToken = await getGitHubInstallationAccessToken();
+    const { GITHUB_REPOSITORY_NAME, GITHUB_ORGANIZATION_NAME } = process.env;
+
+    const indexInfoResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index`, {
+      headers: {
+        authorization: `Bearer ${githubInstallationAccessToken}`, 
+        "user-agent": "Agreement-Center", 
+        accept: "application/json"
+      }
+    });
+
+    const indexInfoResponseJSON = await indexInfoResponse.json() as {name: string}[];
+
+    const isAuthorizedEmail = indexInfoResponseJSON.some(({name}) => name === `${emailAddress}.json`);
+    if (!isAuthorizedEmail) throw new EmailAddressNotAuthorizedError(emailAddress);
 
     // Send a verification code to the selected email.
     console.log("\x1b[34mSending a verification code to the user's selected email address...\x1b[0m");
@@ -47,7 +65,7 @@ router.post("/verification-code", async (request, response) => {
     if (!(EMAIL_SENDER_NAME && EMAIL_SENDER_ADDRESS)) throw new Error("EMAIL_SENDER_NAME and EMAIL_SENDER_ADDRESS environment variables required.");
 
     await transporter.sendMail({
-      to: email_address,
+      to: emailAddress,
       from: {
         name: EMAIL_SENDER_NAME,
         address: EMAIL_SENDER_ADDRESS
@@ -67,7 +85,7 @@ router.post("/verification-code", async (request, response) => {
 
     setCache("verificationInfo", {
       ...getCache("verificationInfo"),
-      [email_address]: {
+      [emailAddress]: {
         expireTime: new Date(new Date().getTime() + 15 * 60000).getTime(),
         verificationCode
       }
@@ -84,6 +102,12 @@ router.post("/verification-code", async (request, response) => {
       response.status(error.statusCode).json({
         message: error.message
       });
+
+    } else if (error instanceof EmailAddressNotAuthorizedError) {
+
+      console.log(`\x1b[33mA user's request to create a verification code has been ignored due to providing an unauthorized email address.\x1b[0m`);
+
+      response.status(201).json({success: true});
 
     } else {
 
@@ -131,7 +155,7 @@ router.post("/access-token", async (request, response) => {
       [accessToken]: emailAddress
     });
 
-    return response.status(201).json(accessToken);
+    return response.status(201).json({accessToken});
 
   } catch (error) {
 

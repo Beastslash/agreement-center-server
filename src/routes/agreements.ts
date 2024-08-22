@@ -1,18 +1,17 @@
 // This function returns a specific agreement from the repository.
 
 import { Router } from "express";
-import fetch from "#utils/fetch.js";
-import jwt from "jsonwebtoken";
+// import fetch from "#utils/fetch.js";
 import MissingQueryError from "#utils/errors/MissingQueryError.js";
 import AgreementNotFoundError from "#utils/errors/AgreementNotFoundError.js";
 import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import ForbiddenError from "#utils/errors/ForbiddenError.js";
 import InputNotFoundAtIndexError from "#utils/errors/InputNotFoundAtIndexError.js";
 import BadRequestError from "#utils/errors/BadRequestError.js";
-import {readFileSync} from "fs";
 import openpgp from "openpgp";
 import { getCache } from "#utils/cache.js";
 import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
+import getGitHubInstallationAccessToken from "#utils/getGitHubInstallationAccessToken.js";
 
 const router = Router();
 
@@ -21,55 +20,6 @@ router.use(async (request, response, next) => {
 
   try {
 
-    async function getInstallationAccessToken(): Promise<string> {
-
-      const jsonWebToken = jwt.sign({iss: process.env.CLIENT_ID}, readFileSync("./security/github.pem"), {algorithm: "RS256", expiresIn: "5s"});
-  
-      const installations = await fetch({
-        host: "api.github.com",
-        path: `/app/installations`,
-        headers: {
-          Authorization: `Bearer ${jsonWebToken}`,
-          "user-agent": "Agreement-Center",
-          "accept": "application/json"
-        },
-        port: 443
-      });
-
-      if (!(installations instanceof Array)) {
-    
-        throw new Error("Malformed response received from GitHub.");
-    
-      }
-
-      const githubAccountID = process.env.GITHUB_ACCOUNT_ID;
-      if (!githubAccountID) throw new Error("GITHUB_ACCOUNT_ID needs to be defined in environment variables.");
-
-      const installationID = installations.find((installation) => installation.account.id === parseInt(githubAccountID, 10))?.id;
-      if (!installationID) throw new Error();
-
-      const installationAccessToken = await fetch({
-        host: "api.github.com",
-        path: `/app/installations/${installationID}/access_tokens`,
-        headers: {
-          Authorization: `Bearer ${jsonWebToken}`,
-          "user-agent": "Agreement-Center",
-          "accept": "application/json"
-        },
-        method: "POST",
-        port: 443
-      });
-
-      if (!(installationAccessToken instanceof Object) || !("token" in installationAccessToken) || typeof(installationAccessToken.token) !== "string") {
-    
-        throw new Error("Malformed response received from GitHub.");
-    
-      }
-
-      return installationAccessToken.token;
-
-    }
-
     const accessToken = request.headers["access-token"];
     if (typeof(accessToken) !== "string") throw new UnauthenticatedError();
 
@@ -77,7 +27,7 @@ router.use(async (request, response, next) => {
     if (!emailAddress) throw new UnauthenticatedError();
 
     response.locals.emailAddress = emailAddress;
-    response.locals.githubInstallationAccessToken = await getInstallationAccessToken();
+    response.locals.githubInstallationAccessToken = await getGitHubInstallationAccessToken();
 
     next();
 
@@ -103,38 +53,104 @@ router.use(async (request, response, next) => {
 
 });
 
-// Verify paths.
-router.use(async (request, response, next) => {
+// List all agreements that the authorized user has access to.
+router.get("/", async (request, response) => {
 
   try {
 
-    // Verify that the agreement is in the user's index list.
-    const agreementPath = request.query.agreement_path;
-    if (typeof(agreementPath) !== "string") {
+    console.log("A user requested a list of their agreements.");
 
-      throw new MissingQueryError("agreement_path");
+    // Get the agreements from GitHub.
+    const { githubInstallationAccessToken, emailAddress } = response.locals;
+    const { GITHUB_ORGANIZATION_NAME, GITHUB_REPOSITORY_NAME } = process.env;
+    const headers = {
+      authorization: `Bearer ${githubInstallationAccessToken}`, 
+      "user-agent": "Agreement-Center", 
+      accept: "application/vnd.github.raw+json"
+    };
+    const indexResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index/${emailAddress}.json`, {headers});
+
+    if (!indexResponse.ok) throw new Error();
+    
+    const documentPathList = await indexResponse.json();
+    const agreements: {
+      path: string;
+      name: string;
+      status: "Completed" | "Awaiting action from you" | "Awaiting action from others" | "Terminated" | "Partially terminated"
+    }[] = [];
+    for (const documentPath of documentPathList) {
+
+      // Verify that the user has permission to this document.
+      const permissionsResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/permissions.json`, {headers});
+      if (!permissionsResponse.ok) throw new Error("Internal server error from GitHub.");
+
+      const { editorIDs, reviewerIDs } = await permissionsResponse.json() as {viewerIDs: string[]; editorIDs: string[]; reviewerIDs: string[]};
+      if (!reviewerIDs.includes(emailAddress) && !editorIDs.includes(emailAddress)) continue;
+
+      // Get the status of the document.
+      const eventsResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/events.json`, {headers});
+      if (!eventsResponse.ok) throw new Error("Internal server error from GitHub.");
+
+      let status: (typeof agreements)[number]["status"] = "Completed";
+      const eventsResponseJSON = await eventsResponse.json();
+      const partyEmailAddresses = Object.keys(eventsResponseJSON);
+      for (const partyEmailAddress of partyEmailAddresses) {
+
+        if (!eventsResponseJSON[partyEmailAddress].sign) {
+
+          if (partyEmailAddress === emailAddress) {
+
+            status = "Awaiting action from you"
+            break;
+
+          } else {
+
+            status = "Awaiting action from others";
+
+          }
+
+        }
+
+      }
+
+      agreements.push({
+        path: documentPath,
+        name: documentPath.slice(documentPath.lastIndexOf("/") + 1),
+        status
+      });
 
     }
-    response.locals.agreementPath = agreementPath;
 
-    const githubRepositoryPath = process.env.REPOSITORY;
-    if (!githubRepositoryPath) {
+    response.json(agreements);
 
-      throw new Error("REPOSITORY environment variable is required.");
+    console.log(`\x1b[32mSuccessfully returned a user's agreements.\x1b[0m`);
+
+  } catch (error) {
+
+    if (error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
+
+      console.log(`\x1b[33mA user's request to list their agreements failed: ${error.message}\x1b[0m`);
+
+      response.status(error.statusCode).json({
+        message: error.message
+      });
+
+    } else {
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Internal server error."
+      });
 
     }
-
-    next();
-
-  } catch (err) {
-
 
   }
 
 });
 
 // Get agreement text and inputs.
-router.get("/", async (request, response) => {
+router.get("/:projectName/:agreementName", async (request, response) => {
 
   try {
 
@@ -166,15 +182,18 @@ router.get("/", async (request, response) => {
       "user-agent": "Agreement-Center", 
       accept: "application/vnd.github.v3.raw"
     }
-    const getFileContents = async (path: string, shouldGetSHA?: boolean) => await fetch({
-      host: "api.github.com", 
-      headers: {
-        ...defaultHeaders,
-        accept: shouldGetSHA ? "application/json" : defaultHeaders.accept
-      },
-      port: 443, 
-      path
-    });
+    const getFileContents = async (path: string, shouldGetSHA?: boolean) => {
+      
+      const response = await fetch(`https://api.github.com/${path}`, {
+        headers: {
+          ...defaultHeaders,
+          accept: shouldGetSHA ? "application/json" : defaultHeaders.accept
+        }
+      });
+
+      return await response.json();
+
+    }
 
     const { REPOSITORY: githubRepositoryPath } = process.env;
     async function getUserAgreementIDs(): Promise<string[]> {
@@ -199,13 +218,9 @@ router.get("/", async (request, response) => {
     
     if (viewEvent) {
 
-      await fetch({
-        host: "api.github.com", 
-        port: 443,
+      await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, {
         headers: defaultHeaders,
-        path: `/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`,
         method: "PUT",
-      }, {
         body: JSON.stringify({
           message: "Add view event",
           sha: agreementEventsInfo.sha,
@@ -257,7 +272,7 @@ router.get("/", async (request, response) => {
 
 });
 
-router.put("/inputs", async (request, response) => {
+router.put("/:projectName/:agreementName/inputs", async (request, response) => {
 
   try {
 
@@ -269,16 +284,13 @@ router.put("/inputs", async (request, response) => {
       "user-agent": "Agreement-Center", 
       accept: "application/vnd.github.v3.raw"
     };
-    const agreementInputsResponse = await fetch({
-      host: "api.github.com",
-      headers,
-      path: `/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`
-    });
+    const agreementInputsResponse = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`, {headers});
+    const agreementInputsResponseJSON = await agreementInputsResponse.json();
 
-    const contentHasProblem = typeof(agreementInputsResponse) !== "string";
+    const contentHasProblem = typeof(agreementInputsResponseJSON) !== "string";
     if (contentHasProblem) throw new Error("Content received from GitHub wasn't a string.");
 
-    const agreementInputs = JSON.parse(agreementInputsResponse);
+    const agreementInputs = JSON.parse(agreementInputsResponseJSON);
     const newInputPairs = request.body;
     if (!(newInputPairs instanceof Object)) throw new BadRequestError("Inputs property is not an object.");
 
