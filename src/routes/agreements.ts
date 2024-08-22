@@ -255,6 +255,9 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     
     if (viewEvent) {
 
+      const personalEvents = events[emailAddress];
+      if (personalEvents.sign) throw new ForbiddenError("You already signed this agreement, so you can't sign it again.");
+
       await updateAgreementEvents(headers, eventsSHA, githubRepositoryPath, agreementPath, {
         ...events,
         [emailAddress]: {
@@ -280,7 +283,7 @@ router.get("/:projectName/:agreementName", async (request, response) => {
 
   } catch (error: unknown) {
 
-    if (error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
+    if (error instanceof ForbiddenError || error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
 
       console.log(`\x1b[33mA user's request to get an agreement's text and inputs failed: ${error.message}\x1b[0m`);
 
