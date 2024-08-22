@@ -26,9 +26,9 @@ router.post("/verification-code", async (request, response) => {
     if (typeof(emailAddress) !== "string") throw new BadRequestError("email_address needs to be a string.");
 
     const githubInstallationAccessToken = await getGitHubInstallationAccessToken();
-    const { GITHUB_REPOSITORY_NAME, GITHUB_ORGANIZATION_NAME } = process.env;
+    const { GITHUB_REPOSITORY_NAME, GITHUB_REPOSITORY_OWNER_NAME } = process.env;
 
-    const indexInfoResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index`, {
+    const indexInfoResponse = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index`, {
       headers: {
         authorization: `Bearer ${githubInstallationAccessToken}`, 
         "user-agent": "Agreement-Center", 

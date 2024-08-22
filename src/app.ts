@@ -10,7 +10,9 @@ import cors from "cors";
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  exposedHeaders: ["email-address"]
+}));
 app.disable("x-powered-by");
 app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);

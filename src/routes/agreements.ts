@@ -1,7 +1,7 @@
 // This function returns a specific agreement from the repository.
 
 import { Router } from "express";
-// import fetch from "#utils/fetch.js";
+import { createHash, createCipheriv } from "crypto";
 import MissingQueryError from "#utils/errors/MissingQueryError.js";
 import AgreementNotFoundError from "#utils/errors/AgreementNotFoundError.js";
 import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
@@ -12,6 +12,7 @@ import openpgp from "openpgp";
 import { getCache } from "#utils/cache.js";
 import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
 import getGitHubInstallationAccessToken from "#utils/getGitHubInstallationAccessToken.js";
+import encryptText from "#utils/encryptText.js";
 
 const router = Router();
 
@@ -62,13 +63,13 @@ router.get("/", async (request, response) => {
 
     // Get the agreements from GitHub.
     const { githubInstallationAccessToken, emailAddress } = response.locals;
-    const { GITHUB_ORGANIZATION_NAME, GITHUB_REPOSITORY_NAME } = process.env;
+    const { GITHUB_REPOSITORY_OWNER_NAME, GITHUB_REPOSITORY_NAME } = process.env;
     const headers = {
       authorization: `Bearer ${githubInstallationAccessToken}`, 
       "user-agent": "Agreement-Center", 
       accept: "application/vnd.github.raw+json"
     };
-    const indexResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index/${emailAddress}.json`, {headers});
+    const indexResponse = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}/contents/index/${emailAddress}.json`, {headers});
 
     if (!indexResponse.ok) throw new Error();
     
@@ -81,14 +82,14 @@ router.get("/", async (request, response) => {
     for (const documentPath of documentPathList) {
 
       // Verify that the user has permission to this document.
-      const permissionsResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/permissions.json`, {headers});
+      const permissionsResponse = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/permissions.json`, {headers});
       if (!permissionsResponse.ok) throw new Error("Internal server error from GitHub.");
 
       const { editorIDs, reviewerIDs } = await permissionsResponse.json() as {viewerIDs: string[]; editorIDs: string[]; reviewerIDs: string[]};
       if (!reviewerIDs.includes(emailAddress) && !editorIDs.includes(emailAddress)) continue;
 
       // Get the status of the document.
-      const eventsResponse = await fetch(`https://api.github.com/repos/${GITHUB_ORGANIZATION_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/events.json`, {headers});
+      const eventsResponse = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}/contents/documents/${documentPath}/events.json`, {headers});
       if (!eventsResponse.ok) throw new Error("Internal server error from GitHub.");
 
       let status: (typeof agreements)[number]["status"] = "Completed";
@@ -150,6 +151,7 @@ router.get("/", async (request, response) => {
 });
 
 // Get agreement text and inputs.
+// Upserts a view event if ?mode=sign.
 router.get("/:projectName/:agreementName", async (request, response) => {
 
   try {
@@ -159,7 +161,7 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     // Verify the user's verification code if they have one.
     type Event = {
       timestamp: number;
-      ipAddress: string;
+      encryptedIPAddress: string;
     }
 
     const { mode } = request.query;
@@ -170,18 +172,21 @@ router.get("/:projectName/:agreementName", async (request, response) => {
 
       viewEvent = {
         timestamp: new Date().getTime(),
-        ipAddress: request.ip
+        encryptedIPAddress: encryptText(request.ip)
       }
 
     }
 
     // Add the codes.
-    const { githubInstallationAccessToken, githubUserID, agreementPath } = response.locals;
+    const { projectName, agreementName } = request.params;
+    const { githubInstallationAccessToken, emailAddress } = response.locals;
     const defaultHeaders = {
       Authorization: `Bearer ${githubInstallationAccessToken}`, 
       "user-agent": "Agreement-Center", 
-      accept: "application/vnd.github.v3.raw"
+      accept: "application/vnd.github.raw+json"
     }
+    const { GITHUB_REPOSITORY_NAME, GITHUB_REPOSITORY_OWNER_NAME } = process.env;
+    const githubRepositoryPath = `${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}`;
     const getFileContents = async (path: string, shouldGetSHA?: boolean) => {
       
       const response = await fetch(`https://api.github.com/${path}`, {
@@ -191,19 +196,13 @@ router.get("/:projectName/:agreementName", async (request, response) => {
         }
       });
 
-      return await response.json();
+      return response;
 
     }
 
-    const { REPOSITORY: githubRepositoryPath } = process.env;
-    async function getUserAgreementIDs(): Promise<string[]> {
-
-      const agreementIDsEncoded = await getFileContents(`/repos/${githubRepositoryPath}/contents/index/${githubUserID}.json`) as string;
-      return JSON.parse(agreementIDsEncoded);
-
-    }
-
-    if (!(await getUserAgreementIDs()).includes(agreementPath)) throw new AgreementNotFoundError();
+    const agreementPath = `${projectName}/${agreementName}`;
+    const agreementIDs = await (await getFileContents(`repos/${githubRepositoryPath}/contents/index/${emailAddress}.json`)).json();
+    if (!agreementIDs.includes(agreementPath)) throw new AgreementNotFoundError();
   
     // Add a viewing event.
     type Events = {
@@ -213,7 +212,7 @@ router.get("/:projectName/:agreementName", async (request, response) => {
         void?: Event;
       }
     };
-    const agreementEventsInfo = await getFileContents(`/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, true) as {sha: string; content: string};
+    const agreementEventsInfo = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, true)).json() as {sha: string; content: string};
     const agreementEvents = JSON.parse(atob(agreementEventsInfo.content)) as Events;
     
     if (viewEvent) {
@@ -226,8 +225,8 @@ router.get("/:projectName/:agreementName", async (request, response) => {
           sha: agreementEventsInfo.sha,
           content: {
             ...agreementEvents,
-            [githubUserID]: {
-              ...agreementEvents[githubUserID],
+            [emailAddress]: {
+              ...agreementEvents[emailAddress],
               view: viewEvent
             }
           }
@@ -237,15 +236,16 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     }
 
     // Return the agreement, its inputs, and its permissions.
-    const agreementText = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/README.md`);
-    const agreementInputs = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/inputs.json`);
-    const agreementPermissions = await getFileContents(`/repos/${process.env.REPOSITORY}/contents/documents/${agreementPath}/permissions.json`);
+    const agreementText = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/README.md`)).text();
+    const agreementInputs = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/inputs.json`)).json();
+    const agreementPermissions = await (await getFileContents(`repos/${githubRepositoryPath}/contents/documents/${agreementPath}/permissions.json`)).json();
+
+    response.setHeader("email-address", emailAddress);
 
     return response.json({
       text: agreementText,
       inputs: agreementInputs,
-      permissions: agreementPermissions,
-      githubUserID: githubUserID
+      permissions: agreementPermissions
     });
 
   } catch (error: unknown) {
