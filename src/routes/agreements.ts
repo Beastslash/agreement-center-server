@@ -1,7 +1,6 @@
 // This function returns a specific agreement from the repository.
 
 import { Router } from "express";
-import { createHash, createCipheriv } from "crypto";
 import MissingQueryError from "#utils/errors/MissingQueryError.js";
 import AgreementNotFoundError from "#utils/errors/AgreementNotFoundError.js";
 import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
@@ -12,7 +11,7 @@ import openpgp from "openpgp";
 import { getCache } from "#utils/cache.js";
 import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
 import getGitHubInstallationAccessToken from "#utils/getGitHubInstallationAccessToken.js";
-import encryptText from "#utils/encryptText.js";
+import crypto from "crypto-js";
 
 const router = Router();
 
@@ -172,7 +171,7 @@ router.get("/:projectName/:agreementName", async (request, response) => {
 
       viewEvent = {
         timestamp: new Date().getTime(),
-        encryptedIPAddress: encryptText(request.ip)
+        encryptedIPAddress: crypto.AES.encrypt(request.ip, process.env.ENCRYPTION_PASSWORD as string).toString()
       }
 
     }
@@ -217,21 +216,27 @@ router.get("/:projectName/:agreementName", async (request, response) => {
     
     if (viewEvent) {
 
-      await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, {
+      const response = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/documents/${agreementPath}/events.json`, {
         headers: defaultHeaders,
         method: "PUT",
         body: JSON.stringify({
           message: "Add view event",
           sha: agreementEventsInfo.sha,
-          content: {
+          content: btoa(JSON.stringify({
             ...agreementEvents,
             [emailAddress]: {
               ...agreementEvents[emailAddress],
               view: viewEvent
             }
-          }
+          }, null, 2))
         })
-      })
+      });
+
+      if (!response.ok) {
+
+        throw new Error(await response.json());
+
+      }
 
     }
 
