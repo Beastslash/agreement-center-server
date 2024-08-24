@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 
 export default async function getGitHubInstallationAccessToken(): Promise<string> {
 
-  const jsonWebToken = jwt.sign({iss: process.env.CLIENT_ID}, readFileSync("./security/github.pem"), {algorithm: "RS256", expiresIn: "5s"});
+  const jsonWebToken = jwt.sign({iss: process.env.GITHUB_CLIENT_ID}, readFileSync("./security/github.pem"), {algorithm: "RS256", expiresIn: "5s"});
 
   const installationsResponse = await fetch("https://api.github.com/app/installations", {
     headers: {
