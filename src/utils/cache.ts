@@ -1,12 +1,15 @@
 const cache = {
   verificationInfo: {} as {[key: string]: {verificationCode: string; expireTime: number}},
-  emailAddresses: {} as {[accessTokens: string]: string}
+  emailAddresses: {} as {[accessToken: string]: string}
 };
-export const setCache = (key: keyof typeof cache, value: any) => cache[key] = value;
 
-export function getCache(key: "verificationInfo"): (typeof cache)["verificationInfo"];
-export function getCache(key: "emailAddresses"): (typeof cache)["emailAddresses"];
-export function getCache(key: keyof typeof cache) {
+export function setCache<CacheKey extends keyof typeof cache>(key: CacheKey, value: (typeof cache)[CacheKey]): void {
+  
+  cache[key] = value;
+
+}
+
+export function getCache<CacheKey extends keyof typeof cache>(key: CacheKey): (typeof cache)[CacheKey] {
 
   return cache[key];
 
