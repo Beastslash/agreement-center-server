@@ -21,7 +21,7 @@ app.get("/", (_, response) => response.redirect("https://github.com/Beastslash/a
 
 const port = process.env.PORT;
 const server = process.env.ENVIRONMENT === "development" ? createServer({
-  key: readFileSync("./security/localhost.key"),
-  cert: readFileSync("./security/localhost.pem")
+  key: readFileSync("./etc/secrets/localhost.key"),
+  cert: readFileSync("./etc/secrets/localhost.pem")
 }, app) : app;
 server.listen(port, () => console.log(`\x1b[32mApplication Center is now listening on port ${port}.\x1b[0m`));
