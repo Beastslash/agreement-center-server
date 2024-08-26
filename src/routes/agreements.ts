@@ -2,7 +2,6 @@
 
 import { Router } from "express";
 import MissingQueryError from "#utils/errors/MissingQueryError.js";
-import AgreementNotFoundError from "#utils/errors/AgreementNotFoundError.js";
 import MissingHeaderError from "#utils/errors/MissingHeaderError.js";
 import { getCache } from "#utils/cache.js";
 import UnauthenticatedError from "#utils/errors/UnauthenticatedError.js";
@@ -125,7 +124,7 @@ router.get("/", async (_, response) => {
 
   } catch (error) {
 
-    if (error instanceof AgreementNotFoundError || error instanceof MissingQueryError) {
+    if (error instanceof MissingQueryError) {
 
       console.log(`\x1b[33mA user's request to list their agreements failed: ${error.message}\x1b[0m`);
 

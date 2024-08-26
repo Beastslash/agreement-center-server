@@ -7,6 +7,7 @@ import { Router } from "express";
 import { createTransport } from "nodemailer";
 
 const router = Router();
+const shouldLogCode = process.env.ENVIRONMENT === "development";
 
 router.post("/", async (request, response) => {
 
@@ -59,22 +60,30 @@ router.post("/", async (request, response) => {
     const { EMAIL_SENDER_NAME, EMAIL_SENDER_ADDRESS } = process.env;
     if (!(EMAIL_SENDER_NAME && EMAIL_SENDER_ADDRESS)) throw new Error("EMAIL_SENDER_NAME and EMAIL_SENDER_ADDRESS environment variables required.");
 
-    await transporter.sendMail({
-      to: emailAddress,
-      from: {
-        name: EMAIL_SENDER_NAME,
-        address: EMAIL_SENDER_ADDRESS
-      },
-      subject: `Verification code [${verificationCode}]`,
-      text: (
-        "Hello!\n"
-        + `\nYour verification code is: ${verificationCode}\n`
-        + `This code will expire in 15 minutes.\n`
-        + "\nYou're receiving this email because you're in the process of signing an electronic agreement. We want to prevent unauthorized access to your account by authenticating you.\n"
-        + "\nBest regards,\n"
-        + "Beastslash Agreements Team"
-      )
-    });
+    if (shouldLogCode) {
+
+      console.log(`The code is ${verificationCode}.`);
+
+    } else {
+
+      await transporter.sendMail({
+        to: emailAddress,
+        from: {
+          name: EMAIL_SENDER_NAME,
+          address: EMAIL_SENDER_ADDRESS
+        },
+        subject: `Verification code [${verificationCode}]`,
+        text: (
+          "Hello!\n"
+          + `\nYour verification code is: ${verificationCode}\n`
+          + `This code will expire in 15 minutes.\n`
+          + "\nYou're receiving this email because you're in the process of signing an electronic agreement. We want to prevent unauthorized access to your account by authenticating you.\n"
+          + "\nBest regards,\n"
+          + "Beastslash Agreements Team"
+        )
+      });
+
+    }
 
     console.log(`\x1b[32mSuccessfully sent an email to the user.\x1b[0m`);
 

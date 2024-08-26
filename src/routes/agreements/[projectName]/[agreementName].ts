@@ -9,7 +9,9 @@ import MissingQueryError from "#utils/errors/MissingQueryError.js";
 import { Event } from "#utils/classes/Event.js";
 import signAgreementRoute from "./[agreementName]/sign.js";
 
-const router = Router();
+const router = Router({
+  mergeParams: true
+});
 
 export type AgreementNameRequestParameters = {
   projectName: string;
@@ -47,9 +49,9 @@ router.get("/", async (request: Request<AgreementNameRequestParameters>, respons
     const { GITHUB_REPOSITORY_NAME, GITHUB_REPOSITORY_OWNER_NAME } = process.env;
     const githubRepositoryPath = `${GITHUB_REPOSITORY_OWNER_NAME}/${GITHUB_REPOSITORY_NAME}`;
     
-
     const agreementPath = `${projectName}/${agreementName}`;
 
+    console.log("\x1b[34mRetrieving account index from GitHub...\x1b[0m");
     const agreementIDsResponse = await fetch(`https://api.github.com/repos/${githubRepositoryPath}/contents/index/${emailAddress}.json`, {headers});
     const agreementIDs = await agreementIDsResponse.json();
   
@@ -78,17 +80,20 @@ router.get("/", async (request: Request<AgreementNameRequestParameters>, respons
     }
 
     // Return the agreement, its inputs, and its permissions.
+    console.log("\x1b[34mRetrieving agreement contents from GitHub...\x1b[0m");
     const agreementText = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "README.md")).text();
     const agreementInputs = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "inputs.json")).json();
     const agreementPermissions = await (await getFileContents(headers, githubRepositoryPath, agreementPath, "permissions.json")).json();
 
     response.setHeader("email-address", emailAddress);
 
-    return response.json({
+    response.json({
       text: agreementText,
       inputs: agreementInputs,
       permissions: agreementPermissions
     });
+
+    console.log(`\x1b[32mSuccessfully returned an agreement to a user.\x1b[0m`);
 
   } catch (error: unknown) {
 

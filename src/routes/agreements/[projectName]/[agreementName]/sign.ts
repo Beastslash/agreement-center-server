@@ -9,7 +9,9 @@ import AgreementNotFoundError from "#utils/errors/AgreementNotFoundError.js";
 import MissingQueryError from "#utils/errors/MissingQueryError.js";
 import { AgreementNameRequestParameters } from "../[agreementName].js";
 
-const router = Router();
+const router = Router({
+  mergeParams: true
+});
 
 router.put("/", async (request: Request<AgreementNameRequestParameters>, response) => {
 
