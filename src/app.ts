@@ -17,9 +17,7 @@ app.disable("x-powered-by");
 app.use("/agreements", agreementsRouter);
 app.use("/authentication", authenticationRouter);
 
-app.get("/", (_, response) => {
-  response.redirect("https://github.com/Beastslash/agreement-center-server/tree/production/src/routes");
-})
+app.get("/", (_, response) => response.redirect("https://github.com/Beastslash/agreement-center-server/tree/production/docs/README.md"));
 
 const port = process.env.PORT;
 const server = process.env.ENVIRONMENT === "development" ? createServer({
